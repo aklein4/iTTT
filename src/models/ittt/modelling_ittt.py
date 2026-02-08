@@ -196,7 +196,7 @@ class ItttLinear(nn.Module):
         delta = newtonschulz(
             self.momentum.to(self.state_dtype),
             eps=self.eps
-        )
+        ).clone()
 
         if self.state is None:
             self.state = delta
