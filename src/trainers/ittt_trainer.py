@@ -111,7 +111,7 @@ class ItttTrainer(BaseTrainer):
                 if key.endswith("00"):
                     continue
 
-                decade = key.split("_")[-1]
+                decade = key.split("_")[-1][0]
 
                 if decade not in decades:
                     decades[decade] = []
