@@ -64,8 +64,9 @@ class ItttFunction(torch.autograd.Function):
         # [b, r, i]
         update = g.transpose(-2, -1) @ x
 
+        # TODO: this scale is a little weird on the first chunk
         mod.down_update = (
-            update # scale here is not really important
+            update / math.sqrt(x.shape[-2]) # approx 1 std
         )
 
         return torch.zeros_like(x), og_grad, None
@@ -101,6 +102,7 @@ class ItttLinear(nn.Module):
         self.down_0 = nn.Parameter(
             torch.randn(rank, self.in_features) / math.sqrt(self.in_features)
         )
+
         self.down_log_lr = nn.Parameter(
             torch.zeros(rank, self.in_features)
         )
@@ -108,6 +110,9 @@ class ItttLinear(nn.Module):
             torch.zeros(1)
         )
 
+        self.base_down_state = nn.Parameter(
+            torch.randn_like(self.down_0) / math.sqrt(self.in_features)
+        )
         self.down_state = None
         self.down_update = None
 
@@ -136,24 +141,23 @@ class ItttLinear(nn.Module):
     ) -> torch.FloatTensor:
         assert x.ndim == 3, "x must be 3D (batch, seq_len, dim)"
 
-        if self.down_state is not None:
+        s = self.base_down_state[None] * self.scalar_scaler
 
-            s = (
+        if self.down_state is not None:
+            s = s + (
                 torch.exp(self.down_log_lr * self.scalar_scaler)[None] *
                 self.down_state
             )
-            s = newtonschulz(s, eps=self.eps)
 
-            s = self.down_0[None] + (
-                self.base_lr *
-                torch.exp(self.global_log_lr * self.scalar_scaler) *
-                s
-            )
+        s = newtonschulz(s, eps=self.eps)
 
-        else:
-            s = self.down_0[None]
+        w = self.down_0[None] + (
+            self.base_lr *
+            torch.exp(self.global_log_lr * self.scalar_scaler) *
+            s
+        )
 
-        z = torch.einsum("boi,bji->bjo", s, x)
+        z = torch.einsum("boi,bji->bjo", w, x)
         z = ItttFunction.apply(x, z, self)
 
         y_lora = F.linear(z, self.up)
