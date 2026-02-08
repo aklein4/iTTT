@@ -45,10 +45,10 @@ def newtonschulz(
 class ItttFunction(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, x, mod):
+    def forward(ctx, x, z, mod):
         ctx.save_for_backward(x)
         ctx.mod = mod
-        return x.clone()
+        return z.clone()
     
 
     @staticmethod
@@ -68,7 +68,7 @@ class ItttFunction(torch.autograd.Function):
             update # scale here is not really important
         )
 
-        return og_grad, None
+        return torch.zeros_like(x), og_grad, None
 
         
 class ItttLinear(nn.Module):
@@ -77,6 +77,7 @@ class ItttLinear(nn.Module):
         self,
         linear: nn.Linear,
         rank: int,
+        base_lr: float,
         eps: float = 1e-7,
     ):
         super().__init__()
@@ -84,7 +85,11 @@ class ItttLinear(nn.Module):
         self.in_features = linear.in_features
         self.out_features = linear.out_features
         self.rank = rank
+
+        self.base_lr = base_lr
+
         self.eps = eps
+        self.scalar_scaler = math.sqrt(self.in_features)
 
         if linear.bias is not None:
             self.bias = linear.bias
@@ -98,6 +103,9 @@ class ItttLinear(nn.Module):
         )
         self.down_log_lr = nn.Parameter(
             torch.zeros(rank, self.in_features)
+        )
+        self.global_log_lr = nn.Parameter(
+            torch.zeros(1)
         )
 
         self.down_state = None
@@ -131,18 +139,22 @@ class ItttLinear(nn.Module):
         if self.down_state is not None:
 
             s = (
-                torch.exp(self.down_log_lr)[None] *
+                torch.exp(self.down_log_lr * self.scalar_scaler)[None] *
                 self.down_state
             )
             s = newtonschulz(s, eps=self.eps)
 
-            s = s + self.down_0[None]
+            s = self.down_0[None] + (
+                self.base_lr *
+                torch.exp(self.global_log_lr * self.scalar_scaler) *
+                s
+            )
 
         else:
             s = self.down_0[None]
 
         z = torch.einsum("boi,bji->bjo", s, x)
-        z = ItttFunction.apply(z, self)
+        z = ItttFunction.apply(x, z, self)
 
         y_lora = F.linear(z, self.up)
         y_base = F.linear(x, self.weight, self.bias)
@@ -186,11 +198,13 @@ class ItttModel(PreTrainedModel):
             layer.self_attn.o_proj = ItttLinear(
                 layer.self_attn.o_proj,
                 rank=config.rank,
+                base_lr=config.base_lr,
                 eps=self.eps
             )
             layer.mlp.down_proj = ItttLinear(
                 layer.mlp.down_proj,
                 rank=config.rank,
+                base_lr=config.base_lr,
                 eps=self.eps
             )
 

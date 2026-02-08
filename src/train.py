@@ -13,6 +13,9 @@ from utils.torch_utils import safe_copy_state
 @hydra.main(version_base=None, config_path="configs", config_name="default")
 def main(config: omegaconf.DictConfig):
 
+    torch.manual_seed(config.seed)
+    torch.cuda.manual_seed_all(config.seed)
+
     print("Loading model...")
     if config.model.pretrained is not None:
         

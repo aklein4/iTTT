@@ -13,7 +13,7 @@ batch_size: 16
 
 model:
 
-    type: ittt.modelling_ittt.ItttForCausalLM
+    type: ittt.modelling_ittt.ItttModel
     pretrained: null
 
     config:
@@ -27,12 +27,16 @@ model:
             start_layer: 16
             rank: 256
 
+            base_lr: 1e-3
+
             _attn_implementation: flash_attention_2
 
 
 trainer:
 
     type: ittt_trainer.ItttTrainer
+
+    skip_steps: null
 
     gradient_checkpointing: true
     autocast_dtype: bfloat16

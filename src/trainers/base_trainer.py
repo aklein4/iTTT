@@ -2,6 +2,7 @@ import torch
 
 import os
 from tqdm import tqdm
+from timeit import default_timer as timer
 
 import wandb
 import huggingface_hub as hf
@@ -160,8 +161,10 @@ class BaseTrainer:
         # init loop vars
         step = 0
         epoch = 0
+        atoms_seen = 0
         pbar = tqdm(desc=f"Training {self.config.project}/{self.config.name}")
         pbar.update(0)
+        training_start_time = timer()
 
         # train indefinitely
         while True:
@@ -188,6 +191,16 @@ class BaseTrainer:
 
                 # log to wandb
                 triggered_save = aux.pop("save_checkpoint", False)
+                
+                elapsed = timer() - training_start_time
+                aux["training_time_elapsed_hr"] = elapsed / 3600.0
+                aux["avg_steps_per_hr"] = (step + 1) / aux["training_time_elapsed_hr"]
+
+                if "num_atoms" in aux:
+                    atoms_seen += aux["num_atoms"]
+                    aux["atoms_seen"] = atoms_seen
+                    aux["avg_atoms_per_hr"] = atoms_seen / aux["training_time_elapsed_hr"]
+
                 self.safe_log(
                     loss=loss,
                     epoch=epoch,

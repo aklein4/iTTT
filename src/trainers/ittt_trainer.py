@@ -12,10 +12,14 @@ class ItttTrainer(BaseTrainer):
 
 
     def loss(self, input_ids, logits):
+        ignore_index = -100
+        if self.model.llama.config.pad_token_id is not None:
+            ignore_index = self.model.llama.config.pad_token_id
+
         return lm_loss(
             input_ids, logits,
-            shift_ids=False,
-            ignore_index=self.model.llama.config.pad_token_id
+            shift_logits=False,
+            ignore_index=ignore_index,
         )
 
 
@@ -49,7 +53,7 @@ class ItttTrainer(BaseTrainer):
         loss.backward()
 
         aux = {
-            "lm_loss/chunk_0": loss.item(),
+            "lm_loss/chunk_00": loss.item(),
         }
         total_loss = loss.item()
 
@@ -71,7 +75,7 @@ class ItttTrainer(BaseTrainer):
 
             loss.backward()
 
-            aux[f"lm_loss/chunk_{i}"] = loss.item()
+            aux[f"lm_loss/chunk_{i:02d}"] = loss.item()
             total_loss += loss.item()
         
         # regular optimization step
@@ -91,5 +95,9 @@ class ItttTrainer(BaseTrainer):
         # do this again just in case
         self.model.reset_state()
 
-        return total_loss, aux
+        # finalize outputs
+        final_loss = total_loss / len(chunks)
+        aux["num_atoms"] = input_ids.numel()
+
+        return final_loss, aux
     

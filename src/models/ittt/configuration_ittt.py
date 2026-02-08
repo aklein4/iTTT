@@ -14,6 +14,8 @@ class ItttConfig(PretrainedConfig):
             The layer from which to start applying the iTTT updates.
         rank (`int`, *optional*, defaults to 256):
             The rank of the low-rank updates.
+        base_lr (`float`, *optional*, defaults to 1e-3):
+            The base learning rate for iTTT updates.
     ```"""
 
     model_type = "ittt"
@@ -24,6 +26,7 @@ class ItttConfig(PretrainedConfig):
         base_model: str="HuggingFaceTB/SmolLM2-360M",
         start_layer: int=0,
         rank: int=256,
+        base_lr: float=1e-3,
         **kwargs,
     ):
         
@@ -31,5 +34,7 @@ class ItttConfig(PretrainedConfig):
 
         self.start_layer = start_layer
         self.rank = rank
+
+        self.base_lr = base_lr
 
         super().__init__(**kwargs)
