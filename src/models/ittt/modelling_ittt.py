@@ -69,7 +69,7 @@ class ItttFunction(torch.autograd.Function):
             this_update / math.sqrt(x.shape[-2]) # approx 1 std
         )
 
-        return torch.zeros_like(x), og_grad, None
+        return None, og_grad, None
 
         
 class ItttLinear(nn.Module):
