@@ -1,0 +1,35 @@
+
+from transformers.configuration_utils import PretrainedConfig
+
+
+class ItttConfig(PretrainedConfig):
+    r"""
+    This is the configuration class to store the configuration of a [`ItttModel`].
+
+
+    Args:
+        base_model (`str`, *optional*, defaults to `"HuggingFaceTB/SmolLM2-360M"`):
+            The name or path of the base model to use for the iTTT initialization.
+        start_layer (`int`, *optional*, defaults to 0):
+            The layer from which to start applying the iTTT updates.
+        rank (`int`, *optional*, defaults to 256):
+            The rank of the low-rank updates.
+    ```"""
+
+    model_type = "ittt"
+
+
+    def __init__(
+        self,
+        base_model: str="HuggingFaceTB/SmolLM2-360M",
+        start_layer: int=0,
+        rank: int=256,
+        **kwargs,
+    ):
+        
+        self.base_model = base_model
+
+        self.start_layer = start_layer
+        self.rank = rank
+
+        super().__init__(**kwargs)

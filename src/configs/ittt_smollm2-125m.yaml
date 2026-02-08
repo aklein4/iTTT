@@ -1,0 +1,88 @@
+debug: false
+
+
+project: iTTT
+name: default
+
+notes: null
+
+seed: 42
+
+batch_size: 16
+
+
+model:
+
+    type: ittt.modelling_ittt.ItttForCausalLM
+    pretrained: null
+
+    config:
+
+        type: ittt.configuration_ittt.ItttConfig
+
+        kwargs:
+
+            base_model: HuggingFaceTB/SmolLM2-135M
+
+            start_layer: 16
+            rank: 256
+
+            _attn_implementation: flash_attention_2
+
+
+trainer:
+
+    type: ittt_trainer.ItttTrainer
+
+    gradient_checkpointing: true
+    autocast_dtype: bfloat16
+
+    grad_norm_clip: 1.0
+
+    checkpoint_interval: 1000
+    manual_checkpoint_interval: 10
+    push_to_hub: true
+
+    chunk_size: 1024
+
+
+optimizer:
+
+    type: adamw.AdamW
+
+    kwargs:
+
+        lr: 2e-4
+        final_lr: 2e-5
+
+        num_warmup_steps: 500
+        num_training_steps: 1000000
+
+        betas: [0.9, 0.95]
+        eps: 1e-8
+
+        weight_decay: 0.1
+
+        grad_clip: null
+
+        nan_safe: false
+
+
+dataset:
+
+    name: aklein4/entropylong-SmolLM2
+
+    kwargs:
+
+        split: train
+
+        streaming: true
+
+
+collator:
+
+    type: simple.SimpleCollator
+
+    kwargs:
+
+        expected_length: 65536

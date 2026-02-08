@@ -4,6 +4,20 @@ import io
 import numpy as np
 
 
+def load_any_array(x) -> torch.Tensor:
+
+    if isinstance(x, list):
+        return torch.tensor(x)
+    
+    elif isinstance(x, np.ndarray):
+        return torch.from_numpy(x)
+    
+    elif isinstance(x, torch.Tensor):
+        return x
+    
+    raise ValueError(f"Unsupported type {type(x)} for load_any_array")
+
+
 def load_byte_array(
     data: bytes
 ) -> torch.LongTensor:

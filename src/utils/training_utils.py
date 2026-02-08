@@ -7,6 +7,36 @@ import torch.nn.functional as F
 import numpy as np
 
 
+def lm_loss(
+    input_ids: torch.LongTensor,
+    logits: torch.FloatTensor,
+    shift_ids: bool = True,
+    shift_logits: bool = True,
+    ignore_index: int = -100,
+    reduction: str = "mean"
+):
+    
+    if shift_ids:
+        input_ids = input_ids[:, 1:]
+    if shift_logits:
+        logits = logits[:, :-1]
+
+    if not logits.is_contiguous():
+        logits = logits.contiguous()
+
+    out = F.cross_entropy(
+        logits.view(-1, logits.shape[-1]),
+        input_ids.reshape(-1),
+        ignore_index=ignore_index,
+        reduction=reduction
+    )
+
+    if reduction == 'none':
+        out = out.reshape_as(input_ids)
+
+    return out
+
+
 def log_prob(
     logits: torch.Tensor,
     x: torch.LongTensor,
