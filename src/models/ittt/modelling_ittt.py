@@ -144,6 +144,7 @@ class ItttLinear(nn.Module):
         )
     
 
+    @torch.compile(fullgraph=True, mode="reduce-overhead")
     def forward(
         self,
         x: torch.FloatTensor,
