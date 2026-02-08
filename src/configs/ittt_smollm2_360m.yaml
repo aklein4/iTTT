@@ -56,8 +56,8 @@ optimizer:
 
     kwargs:
 
-        lr: 5e-4
-        final_lr: 5e-5
+        lr: 1e-3
+        final_lr: 1e-4
 
         num_warmup_steps: 50
         num_training_steps: 1000000
