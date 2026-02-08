@@ -134,6 +134,11 @@ class ItttLinear(nn.Module):
         self.out_proj.copy_(u[:, :self.rank] * s_sqrt[None, :])
 
         self.weight -= self.out_proj @ self.state_0
+
+        self.base_lr = (
+            self.base_lr *
+            self.state_0.std().item() / math.sqrt(self.in_features)
+        )
     
 
     def forward(

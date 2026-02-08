@@ -104,5 +104,21 @@ class ItttTrainer(BaseTrainer):
         final_loss = total_loss / len(chunks)
         aux["num_atoms"] = input_ids.numel()
 
+        decades = {}
+        for key, value in aux.items():
+
+            if "chunk_" in key:
+                if key.endswith("00"):
+                    continue
+
+                decade = key.split("_")[1]
+
+                if decade not in decades:
+                    decades[decade] = []
+                decades[decade].append(value)
+
+        for decade, values in decades.items():
+            aux[f"grouped_lm_loss/decade_{decade}"] = sum(values) / len(values)
+
         return final_loss, aux
     
