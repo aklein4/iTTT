@@ -1,5 +1,7 @@
 import torch
 
+from tqdm import tqdm
+
 from trainers.base_trainer import BaseTrainer
 from models.ittt.modelling_ittt import ItttModel
 from utils.training_utils import lm_loss
@@ -58,7 +60,7 @@ class ItttTrainer(BaseTrainer):
         total_loss = loss.item()
 
         # remaining chunks
-        for i in range(1, len(chunks)):
+        for i in tqdm(range(1, len(chunks)), desc="Processing Chunks", leave=False):
             in_chunk = chunks[i-1]
             out_chunk = chunks[i]
             all_chunk = torch.cat([in_chunk, out_chunk], dim=-1)
@@ -69,9 +71,12 @@ class ItttTrainer(BaseTrainer):
 
                 logits = self.model(
                     all_chunk,
-                    logits_to_keep=slice(in_chunk.shape[-1], -1)
+                    logits_to_keep=slice(in_chunk.shape[-1]-1, -1)
                 ).logits
-                loss = self.loss(out_chunk, logits)
+                loss = self.loss(
+                    all_chunk[:, in_chunk.shape[-1]-1:],
+                    logits
+                )
 
             loss.backward()
 
