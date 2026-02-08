@@ -90,7 +90,11 @@ class ItttLinear(nn.Module):
         self.out_features = linear.out_features
         self.rank = rank
 
-        self.base_lr = base_lr
+        self.register_buffer(
+            "base_lr",
+            torch.full([1], base_lr, dtype=torch.float32),
+            persistent=True
+        )
         self.momentum_beta = momentum_beta
 
         self.eps = eps
@@ -135,9 +139,8 @@ class ItttLinear(nn.Module):
 
         self.weight -= self.out_proj @ self.state_0
 
-        self.base_lr = (
-            self.base_lr *
-            self.state_0.std().item() / math.sqrt(self.in_features)
+        self.base_lr.mul_(
+            self.state_0.std().item() * math.sqrt(self.in_features)
         )
     
 
