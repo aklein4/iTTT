@@ -1,0 +1,139 @@
+debug: false
+
+
+project: LatentReasoning-ZLM
+name: default
+
+notes: null
+
+
+batch_size: 256
+
+
+model:
+
+    type: zlm.modelling_zlm.ZLMModel
+    pretrained: null
+
+    config:
+
+        type: zlm.configuration_zlm.ZLMConfig
+        
+        kwargs:
+
+            # TinyLlama/TinyLlama_v1.1
+            bos_token_id: 1
+            eos_token_id: 2
+            hidden_act: silu
+            hidden_size: 2048
+            initializer_range: 0.02
+            intermediate_size: 5632
+            max_position_embeddings: 2048
+            num_attention_heads: 32
+            num_hidden_layers: 22
+            num_key_value_heads: 4
+            rms_norm_eps: 1.0e-05
+            rope_scaling: null
+            tie_word_embeddings: false
+            vocab_size: 32000
+
+            pad_token_id: 0
+
+            input_length: 128
+            output_length: 128
+            z_length: 192
+
+            latent_size: 64
+
+            pretrained_llama: TinyLlama/TinyLlama_v1.1
+
+            minimum_diffusion_timestep: 0.5
+            num_diffusion_timesteps: 32
+
+            num_t_embed_frequencies: 64
+            t_mlp_size: 256
+
+            num_diffusion_head_layers: 2
+            diffusion_in_proj: true
+
+            _attn_implementation: flash_attention_2
+
+
+trainer:
+
+    type: zlm_trainer.ZLMTrainer
+
+    skip_steps: null
+
+    gradient_checkpointing: true
+    autocast_dtype: bfloat16
+
+    checkpoint_interval: 2500
+    manual_checkpoint_interval: 10
+
+    init_hook: false
+    init_hook_step: null
+    hook_warmup_steps: 1000
+    hook_wait_steps: 3000
+
+    loss_threshold: 1.25
+
+    lower_loss_threshold: 0.75
+    min_lm_loss_scale: 0.01
+
+    num_diffusion_samples: 16
+
+    kl_weight_relu_shift: 0.25
+
+    beta: 0.1
+
+    histogram_log_interval: 100
+    distance_log_interval: 100
+
+
+optimizer:
+
+    type: adamw.AdamW
+
+    kwargs:
+
+        lr: 3e-5
+        final_lr: 3e-5
+
+        num_warmup_steps: 100
+        num_training_steps: 1000000
+
+        betas: [0.9, 0.95]
+        eps: 1e-8
+
+        weight_decay: 0.01
+
+        grad_clip: 3.0
+
+        nan_safe: false
+
+
+dataset:
+
+    name: aklein4/fineweb-edu-sample-10BT-shuffled
+
+    kwargs:
+
+        split: train
+
+        streaming: true
+
+
+collator:
+
+    type: pad_minimizer.PadMinimizer
+
+    kwargs:
+
+        tokenizer_url: TinyLlama/TinyLlama_v1.1
+        
+        max_length: 256
+
+        true_batch_size: 128
+
+        replace_pad_token: 0
