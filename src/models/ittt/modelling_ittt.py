@@ -62,11 +62,11 @@ class ItttFunction(torch.autograd.Function):
         g = simple_rms_norm(grad, eps=mod.eps) # [b, s, r]
 
         # [b, r, i]
-        update = g.transpose(-2, -1) @ x
+        this_update = g.transpose(-2, -1) @ x
 
         # TODO: this scale is a little weird on the first chunk
-        mod.down_update = (
-            update / math.sqrt(x.shape[-2]) # approx 1 std
+        mod.update = (
+            this_update / math.sqrt(x.shape[-2]) # approx 1 std
         )
 
         return torch.zeros_like(x), og_grad, None
@@ -79,7 +79,10 @@ class ItttLinear(nn.Module):
         linear: nn.Linear,
         rank: int,
         base_lr: float,
+        momentum_beta: float,
         eps: float = 1e-7,
+        momentum_dtype=torch.bfloat16,
+        state_dtype=torch.float32,
     ):
         super().__init__()
 
@@ -88,9 +91,13 @@ class ItttLinear(nn.Module):
         self.rank = rank
 
         self.base_lr = base_lr
+        self.momentum_beta = momentum_beta
 
         self.eps = eps
         self.scalar_scaler = math.sqrt(self.in_features)
+
+        self.momentum_dtype = momentum_dtype
+        self.state_dtype = state_dtype
 
         if linear.bias is not None:
             self.bias = linear.bias
@@ -99,24 +106,18 @@ class ItttLinear(nn.Module):
         
         self.weight = linear.weight
 
-        self.down_0 = nn.Parameter(
+        self.state_0 = nn.Parameter(
             torch.randn(rank, self.in_features) / math.sqrt(self.in_features)
         )
-
-        self.down_log_lr = nn.Parameter(
+        self.log_lr = nn.Parameter(
             torch.zeros(rank, self.in_features)
         )
-        self.global_log_lr = nn.Parameter(
-            torch.zeros(1)
-        )
 
-        self.base_down_state = nn.Parameter(
-            torch.randn_like(self.down_0) / math.sqrt(self.in_features)
-        )
-        self.down_state = None
-        self.down_update = None
+        self.state = None
+        self.momentum = None
+        self.update = None
 
-        self.up = nn.Parameter(
+        self.out_proj = nn.Parameter(
             torch.randn(self.out_features, rank) / math.sqrt(self.rank)
         )
 
@@ -129,10 +130,10 @@ class ItttLinear(nn.Module):
         u, s, v = torch.linalg.svd(self.weight, full_matrices=False)
         s_sqrt = torch.sqrt(s[:self.rank])
 
-        self.down_0.copy_(v[:self.rank] * s_sqrt[:, None])
-        self.up.copy_(u[:, :self.rank] * s_sqrt[None, :])
+        self.state_0.copy_(v[:self.rank] * s_sqrt[:, None])
+        self.out_proj.copy_(u[:, :self.rank] * s_sqrt[None, :])
 
-        self.weight -= self.up @ self.down_0
+        self.weight -= self.out_proj @ self.state_0
     
 
     def forward(
@@ -141,31 +142,61 @@ class ItttLinear(nn.Module):
     ) -> torch.FloatTensor:
         assert x.ndim == 3, "x must be 3D (batch, seq_len, dim)"
 
-        s = self.base_down_state[None] * self.scalar_scaler
+        s = 0.0
+        if self.state is not None:
 
-        if self.down_state is not None:
-            s = s + (
-                torch.exp(self.down_log_lr * self.scalar_scaler)[None] *
-                self.down_state
+            s = (
+                self.base_lr *
+                torch.exp(self.log_lr * self.scalar_scaler)[None] *
+                self.state
             )
 
-        s = newtonschulz(s, eps=self.eps)
-
-        w = self.down_0[None] + (
-            self.base_lr *
-            torch.exp(self.global_log_lr * self.scalar_scaler) *
-            s
-        )
+        w = self.state_0[None] + s
 
         z = torch.einsum("boi,bji->bjo", w, x)
         z = ItttFunction.apply(x, z, self)
 
-        y_lora = F.linear(z, self.up)
+        y_lora = F.linear(z, self.out_proj)
         y_base = F.linear(x, self.weight, self.bias)
 
         y = y_base + y_lora
 
         return y
+
+    
+    @torch.no_grad()
+    def reset_state(self):
+        self.state = None
+        self.momentum = None
+        self.update = None
+
+    
+    @torch.no_grad()
+    def update_state(self):
+        if self.update is None:
+            return
+                
+        if self.momentum is None:
+            self.momentum = (
+                (1 - self.momentum_beta) * self.update.to(self.momentum_dtype)
+            )
+        else:
+            self.momentum = (
+                self.momentum_beta * self.momentum +
+                (1 - self.momentum_beta) * self.update.to(self.momentum_dtype)
+            )
+        self.update = None
+
+        # we don't worry about adam-like biased momentum because newton-schulz normalizes anyway
+        delta = newtonschulz(
+            self.momentum.to(self.state_dtype),
+            eps=self.eps
+        )
+
+        if self.state is None:
+            self.state = delta
+        else:
+            self.state += delta
 
 
 class ItttModel(PreTrainedModel):
@@ -203,12 +234,14 @@ class ItttModel(PreTrainedModel):
                 layer.self_attn.o_proj,
                 rank=config.rank,
                 base_lr=config.base_lr,
+                momentum_beta=config.momentum_beta,
                 eps=self.eps
             )
             layer.mlp.down_proj = ItttLinear(
                 layer.mlp.down_proj,
                 rank=config.rank,
                 base_lr=config.base_lr,
+                momentum_beta=config.momentum_beta,
                 eps=self.eps
             )
 
@@ -224,26 +257,15 @@ class ItttModel(PreTrainedModel):
     def reset_state(self):
         for m in self.modules():
             if isinstance(m, ItttLinear):
-
-                m.down_state = None
-                m.down_update = None
-
+                m.reset_state()
+                
 
     @torch.no_grad()
-    def update_state(self, dtype=torch.float32):
+    def update_state(self):
         for m in self.modules():
             if isinstance(m, ItttLinear):
+                m.update_state()
                 
-                if m.down_update is None:
-                    continue
-
-                if m.down_state is None:
-                    m.down_state = m.down_update.to(dtype)
-                else:
-                    m.down_state += m.down_update.to(dtype)
-                
-                m.down_update = None
-
 
     def forward(self, *args, **kwargs):
         return self.llama(*args, **kwargs)

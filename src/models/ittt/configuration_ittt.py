@@ -16,6 +16,8 @@ class ItttConfig(PretrainedConfig):
             The rank of the low-rank updates.
         base_lr (`float`, *optional*, defaults to 1e-3):
             The base learning rate for iTTT updates.
+        momentum_beta (`float`, *optional*, defaults to 0.75):
+            The beta parameter for momentum in iTTT updates.
     ```"""
 
     model_type = "ittt"
@@ -27,6 +29,7 @@ class ItttConfig(PretrainedConfig):
         start_layer: int=0,
         rank: int=256,
         base_lr: float=1e-3,
+        momentum_beta: float=0.75,
         **kwargs,
     ):
         
@@ -36,5 +39,6 @@ class ItttConfig(PretrainedConfig):
         self.rank = rank
 
         self.base_lr = base_lr
+        self.momentum_beta = momentum_beta
 
         super().__init__(**kwargs)
