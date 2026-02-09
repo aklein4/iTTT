@@ -197,9 +197,9 @@ class ItttLinear(nn.Module):
 
         # we don't worry about adam-like biased momentum because newton-schulz normalizes anyway
         delta = -newtonschulz(
-            self.momentum.to(self.state_dtype),
+            self.momentum,
             eps=self.eps
-        ).clone()
+        ).to(self.state_dtype)
 
         if self.state is None:
             self.state = delta
