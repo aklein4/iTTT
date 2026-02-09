@@ -62,7 +62,7 @@ class ItttFunction(torch.autograd.Function):
         g = F.normalize(grad, dim=-2, eps=mod.eps) * math.sqrt(x.shape[-2])  # [b, s, r]
 
         # [b, r, i]
-        this_update = g.transpose(-2, -1) @ x
+        this_update = g.transpose(-2, -1).to(x.dtype) @ x
 
         # TODO: this scale is a little weird on the first chunk
         mod.update = (
