@@ -27,7 +27,7 @@ model:
             start_layer: 8
             rank: 256
 
-            base_lr: 1e-2
+            base_lr: 1e-3
             momentum_beta: 0.75
 
             _attn_implementation: flash_attention_2
@@ -57,8 +57,8 @@ optimizer:
 
     kwargs:
 
-        lr: 1e-3
-        final_lr: 1e-4
+        lr: 3e-4
+        final_lr: 3e-5
 
         num_warmup_steps: 50
         num_training_steps: 1000000

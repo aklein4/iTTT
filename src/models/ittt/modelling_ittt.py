@@ -59,7 +59,7 @@ class ItttFunction(torch.autograd.Function):
         mod = ctx.mod
         
         x = simple_rms_norm(x, eps=mod.eps) # [b, s, i]
-        g = simple_rms_norm(grad, eps=mod.eps) # [b, s, r]
+        g = F.normalize(grad, dim=-2, eps=mod.eps) * math.sqrt(x.shape[-2])  # [b, s, r]
 
         # [b, r, i]
         this_update = g.transpose(-2, -1) @ x
@@ -140,7 +140,7 @@ class ItttLinear(nn.Module):
         self.weight -= self.out_proj @ self.state_0
 
         self.base_lr.mul_(
-            self.state_0.std() * math.sqrt(self.in_features)
+            self.state_0.std() / (1.0/math.sqrt(self.in_features))
         )
     
 
@@ -238,6 +238,13 @@ class ItttModel(PreTrainedModel):
         for layer in self.llama.model.layers[self.start_layer:]:
             layer: LlamaDecoderLayer
 
+            layer.self_attn.q_proj = ItttLinear(
+                layer.self_attn.q_proj,
+                rank=config.rank,
+                base_lr=config.base_lr,
+                momentum_beta=config.momentum_beta,
+                eps=self.eps
+            )
             layer.self_attn.o_proj = ItttLinear(
                 layer.self_attn.o_proj,
                 rank=config.rank,
