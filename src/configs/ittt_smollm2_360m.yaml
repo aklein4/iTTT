@@ -45,10 +45,10 @@ trainer:
     grad_norm_clip: 1.0
 
     checkpoint_interval: 1000
-    manual_checkpoint_interval: 10
+    manual_checkpoint_interval: 5
     push_to_hub: true
 
-    chunk_size: 1024
+    chunk_size: 512
 
 
 optimizer:
@@ -75,7 +75,7 @@ optimizer:
 
 dataset:
 
-    name: aklein4/entropylong-SmolLM2
+    name: aklein4/longattn-SmolLM2
 
     kwargs:
 
@@ -90,4 +90,4 @@ collator:
 
     kwargs:
 
-        expected_length: 65536
+        expected_length: 32768
