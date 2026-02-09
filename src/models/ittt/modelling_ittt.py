@@ -140,7 +140,7 @@ class ItttLinear(nn.Module):
         self.weight -= self.out_proj @ self.state_0
 
         self.base_lr.mul_(
-            self.state_0.std().item() * math.sqrt(self.in_features)
+            self.state_0.std() * math.sqrt(self.in_features)
         )
     
 
