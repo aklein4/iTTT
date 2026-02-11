@@ -1,0 +1,93 @@
+debug: false
+
+
+project: iTTT
+name: default
+
+notes: null
+
+seed: 42
+
+batch_size: 32
+
+
+model:
+
+    type: ittt.modelling_ittt.ItttModel
+    pretrained: null
+
+    config:
+
+        type: ittt.configuration_ittt.ItttConfig
+
+        kwargs:
+
+            base_model: HuggingFaceTB/SmolLM2-1.7B
+
+            start_layer: 8
+            rank: 512
+
+            base_lr: 1e-3
+            momentum_beta: 0.75
+
+            _attn_implementation: flash_attention_2
+
+
+trainer:
+
+    type: ittt_trainer.ItttTrainer
+
+    skip_steps: null
+
+    gradient_checkpointing: true
+    autocast_dtype: bfloat16
+
+    grad_norm_clip: 1.0
+
+    checkpoint_interval: 1000
+    manual_checkpoint_interval: 5
+    push_to_hub: true
+
+    chunk_size: 512
+
+
+optimizer:
+
+    type: adamw.AdamW
+
+    kwargs:
+
+        lr: 1e-4
+        final_lr: 1e-5
+
+        num_warmup_steps: 50
+        num_training_steps: 1000000
+
+        betas: [0.9, 0.95]
+        eps: 1e-7
+
+        weight_decay: 0.01
+
+        grad_clip: null
+
+        nan_safe: true
+
+
+dataset:
+
+    name: aklein4/longattn-SmolLM2
+
+    kwargs:
+
+        split: train
+
+        streaming: true
+
+
+collator:
+
+    type: simple.SimpleCollator
+
+    kwargs:
+
+        expected_length: 32768

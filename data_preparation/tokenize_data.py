@@ -13,7 +13,8 @@ DATASETS = [
     # ("HuggingFaceFW/fineweb", "sample-10BT"),
     # ("HuggingFaceFW/fineweb-edu", "sample-10BT"),
     # ("caskcsg/entropylong_128k",)
-    ("Lyun0912/LongABC",)
+    # ("Lyun0912/LongABC",)
+    
 ]
 
 BS = 512
