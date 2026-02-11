@@ -86,15 +86,12 @@ class ItttLinear(nn.Module):
     ):
         super().__init__()
 
+        # save config
         self.in_features = linear.in_features
         self.out_features = linear.out_features
         self.rank = rank
 
-        self.register_buffer(
-            "base_lr",
-            torch.full([1], base_lr, dtype=torch.float32),
-            persistent=True
-        )
+        self.base_lr = base_lr
         self.momentum_beta = momentum_beta
 
         self.eps = eps
@@ -103,27 +100,25 @@ class ItttLinear(nn.Module):
         self.momentum_dtype = momentum_dtype
         self.state_dtype = state_dtype
 
+        # save linear
+        self.weight = linear.weight
         if linear.bias is not None:
             self.bias = linear.bias
         else:
             self.register_parameter("bias", None)
         
-        self.weight = linear.weight
-
-        self.state_0 = nn.Parameter(
-            torch.randn(rank, self.in_features) / math.sqrt(self.in_features)
-        )
+        # ittt params
         self.log_lr = nn.Parameter(
             torch.zeros(rank, self.in_features)
         )
-
-        self.state = None
-        self.momentum = None
-        self.update = None
-
         self.out_proj = nn.Parameter(
             torch.randn(self.out_features, rank) / math.sqrt(self.rank)
         )
+
+        # ephemeral state
+        self.state = None
+        self.momentum = None
+        self.update = None
 
         self.svd_init()
 
@@ -132,15 +127,10 @@ class ItttLinear(nn.Module):
     def svd_init(self):
 
         u, s, v = torch.linalg.svd(self.weight, full_matrices=False)
-        s_sqrt = torch.sqrt(s[:self.rank])
 
-        self.state_0.copy_(v[:self.rank] * s_sqrt[:, None])
-        self.out_proj.copy_(u[:, :self.rank] * s_sqrt[None, :])
-
-        self.weight -= self.out_proj @ self.state_0
-
-        self.base_lr.mul_(
-            self.state_0.std() / (1.0/math.sqrt(self.in_features))
+        self.out_proj.copy_(
+            u[:, :self.rank] *
+            s[None, :self.rank]
         )
     
 
@@ -150,18 +140,18 @@ class ItttLinear(nn.Module):
     ) -> torch.FloatTensor:
         assert x.ndim == 3, "x must be 3D (batch, seq_len, dim)"
 
-        s = 0.0
         if self.state is not None:
 
-            s = (
+            lr = (
                 self.base_lr *
-                torch.exp(self.log_lr * self.scalar_scaler)[None] *
-                self.state
+                torch.exp(self.log_lr * self.scalar_scaler)
             )
+            s = lr[None] * self.state
 
-        w = self.state_0[None] + s
+        else:
+            s = torch.zeros_like(self.log_lr)[None]
 
-        z = torch.einsum("boi,bji->bjo", w, x)
+        z = torch.einsum("boi,bji->bjo", s, x)
         z = ItttFunction.apply(x, z, self)
 
         y_lora = F.linear(z, self.out_proj)

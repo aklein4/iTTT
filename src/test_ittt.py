@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from models.ittt.modelling_ittt import ItttModel
 
 
-URL = "aklein4/iTTT_momentum"
+URL = "aklein4/iTTT_longattn"
 SUBFOLDER = "step_000000001000"
 
 
@@ -18,7 +18,7 @@ def main():
         subfolder=SUBFOLDER,
     )
 
-    w = model.llama.model.layers[12].mlp.down_proj
+    w = model.llama.model.layers[24].mlp.down_proj
 
     plt.hist(
         (w.log_lr * w.scalar_scaler).flatten().cpu().detach().numpy(),
@@ -44,10 +44,10 @@ def main():
         sims[:, ind] = -1e9
         ind = torch.argmax(sims[ind]).item()
 
-    y = x[indices]
+    x = x[indices]
 
     plt.matshow(
-        y.cpu().detach().numpy(),
+        x.cpu().detach().numpy(),
     )
     plt.colorbar()
     plt.savefig("lr_mat.png")

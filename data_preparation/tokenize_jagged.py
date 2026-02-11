@@ -10,12 +10,12 @@ from transformers import AutoTokenizer
 TOKENIZER_URL = "HuggingFaceTB/SmolLM2-135M" # "TinyLlama/TinyLlama_v1.1"
 
 DATASET = (
-    "allenai/dolma3_longmino_mix-50B-1025",
+    "Geralt-Targaryen/books3",
 )
 
 BS = 512
 
-SAVE_URL = "aklein4/longmino-50B-SmolLM2"
+SAVE_URL = "aklein4/books3-SmolLM2"
 
 
 def tokenize_batch(
@@ -26,19 +26,20 @@ def tokenize_batch(
     input_ids = tokenizer(
         example["text"],
         add_special_tokens=True,
-        return_tensors="np",
         padding=False,
         truncation=False,
-    ).input_ids.astype(np.uint16)
+    ).input_ids
 
-    print([len(x) for x in input_ids])
-    exit()
-
-    keep = input_ids[:, -1] != tokenizer.pad_token_id
+    lengths = [
+        len(x) for x in input_ids
+    ]
+    input_ids = [
+        np.array(x).astype(np.uint16) for x in input_ids
+    ]
 
     out = {
         "input_ids": [x for x in input_ids],
-        "keep": [x for x in keep],
+        "num_tokens": [x for x in lengths],
     }
 
     return out
@@ -53,7 +54,7 @@ def tokenize_dataset(
 
     data = data.map(
         partial(tokenize_batch, tokenizer=tokenizer),
-        remove_columns=data.column_names,
+        remove_columns=["text"],
         batched=True,
         batch_size=BS,
     )
