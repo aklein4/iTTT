@@ -81,7 +81,6 @@ class ItttTrainer(BaseTrainer):
             loss.backward()
 
             aux[f"lm_loss/chunk_{i:02d}"] = loss.item()
-            aux[f"aux_loss/chunk_{i:02d}"] = self.model.get_prev_loss().item()
             total_loss += loss.item()
         
         # regular optimization step
@@ -106,10 +105,9 @@ class ItttTrainer(BaseTrainer):
         aux["num_atoms"] = input_ids.numel()
 
         decades = {}
-        aux_decades = {}
         for key, value in aux.items():
 
-            if "lm_loss/chunk_" in key:
+            if "chunk_" in key:
                 if key.endswith("00"):
                     continue
 
@@ -119,20 +117,8 @@ class ItttTrainer(BaseTrainer):
                     decades[decade] = []
                 decades[decade].append(value)
 
-            elif "aux_loss/chunk_" in key:
-                if key.endswith("00"):
-                    continue
-
-                decade = key.split("_")[-1][0]
-
-                if decade not in aux_decades:
-                    aux_decades[decade] = []
-                aux_decades[decade].append(value)
-
         for decade, values in decades.items():
             aux[f"grouped_lm_loss/decade_{decade}"] = sum(values) / len(values)
-        for decade, values in aux_decades.items():
-            aux[f"aux_grouped_loss/decade_{decade}"] = sum(values) / len(values)
 
         return final_loss, aux
     
