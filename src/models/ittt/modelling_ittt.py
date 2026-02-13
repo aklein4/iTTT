@@ -9,6 +9,7 @@ from transformers.modeling_utils import PreTrainedModel
 from models.ittt.configuration_ittt import ItttConfig
 from models.reference_llama.modelling_llama import LlamaForCausalLM, LlamaDecoderLayer
 from utils.torch_utils import simple_rms_norm
+import utils.constants as constants
 
 
 @torch.compile(fullgraph=True, mode="reduce-overhead")
@@ -42,6 +43,62 @@ def newtonschulz(
     return y
 
 
+# @torch.compile(fullgraph=False, mode="reduce-overhead")
+def ittt_op(
+    x, grad, momentum, beta, eps, aux_weight, num_ittt
+):
+    x_dtype = x.dtype
+    
+    do_loss = momentum is not None
+    tp = torch.bfloat16 if constants.DEVICE == "cuda" else torch.float32
+
+    x_leaf = x.to(tp)
+    g = grad.to(tp)
+
+    with torch.set_grad_enabled(do_loss):
+
+        x_leaf = x_leaf.detach().requires_grad_(do_loss)
+        g = g.detach().requires_grad_(False)
+    
+        x = simple_rms_norm(
+            x_leaf - x_leaf.mean(-2, keepdim=True),
+            eps=eps
+        ) # [b, s, i]
+
+        g = g.float()
+        g = F.normalize(grad, dim=-2, eps=eps) * math.sqrt(x.shape[-2])  # [b, s, r]
+        g = g.to(tp)
+
+        # [b, r, i]
+        update = (g.transpose(-2, -1) @ x) / math.sqrt(x.shape[-2])
+
+        if do_loss:
+
+            w = (
+                beta * momentum.to(x.dtype) +
+                (1 - beta) * update
+            )
+
+            pred_g = torch.einsum("boi,bji->bjo", w, x)
+            pred_g = simple_rms_norm(pred_g, eps=eps)
+
+            targ_g = simple_rms_norm(g, eps=eps)
+
+            g_loss = F.mse_loss(pred_g, targ_g) / num_ittt
+            
+            weighted_loss = aux_weight * g_loss
+            x_grad = torch.autograd.grad(weighted_loss, x_leaf)[0]
+        
+            x_grad = x_grad.to(x_dtype)
+            g_loss = g_loss.detach()
+
+        else:
+            x_grad = None
+            g_loss = None
+
+    return update.detach(), x_grad, g_loss
+
+
 class ItttFunction(torch.autograd.Function):
 
     @staticmethod
@@ -57,51 +114,14 @@ class ItttFunction(torch.autograd.Function):
         x, = ctx.saved_tensors
         mod: ItttLinear = ctx.mod
 
-        og_grad = grad.clone()
-        x_dtype = x.dtype
-        
-        do_loss = mod.momentum is not None
+        update, x_grad, g_loss = ittt_op(
+            x, grad, mod.momentum, mod.momentum_beta, mod.eps, mod.aux_weight, mod.num_ittt
+        )
 
-        with torch.set_grad_enabled(do_loss):
-                
-            x_leaf = x.float()
-            g = grad.float()
+        mod.update = update
+        mod.prev_loss = g_loss
 
-            x_leaf = x_leaf.detach().requires_grad_(do_loss)
-            g = g.detach().requires_grad_(False)
-        
-            x = simple_rms_norm(
-                x_leaf - x_leaf.mean(-2, keepdim=True),
-                eps=mod.eps
-            ) # [b, s, i]
-            g = simple_rms_norm(g, eps=mod.eps)  # [b, s, r]
-
-            # [b, r, i]
-            this_update = g.transpose(-2, -1) @ x
-
-            # TODO: this scale is a little weird on the first chunk
-            mod.update = (
-                this_update / math.sqrt(x.shape[-2]) # approx 1 std
-            )
-
-            if do_loss:
-
-                w = mod.momentum_step(this_update)
-
-                pred_g = torch.einsum("boi,bji->bjo", w, x)
-                pred_g = simple_rms_norm(pred_g, eps=mod.eps)
-
-                mod.prev_loss = F.mse_loss(pred_g, g) / mod.num_ittt
-                
-                weighted_loss = mod.aux_weight * mod.prev_loss
-                x_grad = torch.autograd.grad(weighted_loss, x_leaf)[0]
-            
-                x_grad = x_grad.to(x_dtype)
-
-            else:
-                x_grad = None
-
-        return x_grad, og_grad, None
+        return x_grad, grad, None
 
         
 class ItttLinear(nn.Module):
@@ -225,12 +245,12 @@ class ItttLinear(nn.Module):
                 
         if self.momentum is None:
             self.momentum = (
-                (1 - self.momentum_beta) * self.update.detach().to(self.momentum_dtype)
+                (1 - self.momentum_beta) * self.update.to(self.momentum_dtype)
             )
         else:
             self.momentum = (
                 self.momentum_beta * self.momentum +
-                (1 - self.momentum_beta) * self.update.detach().to(self.momentum_dtype)
+                (1 - self.momentum_beta) * self.update.to(self.momentum_dtype)
             )
         self.update = None
 

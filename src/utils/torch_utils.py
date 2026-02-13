@@ -126,4 +126,7 @@ def shift(
 
 
 def simple_rms_norm(x, eps=1e-7):
-    return F.rms_norm(x, [x.shape[-1]], eps=eps)
+    og_dtype = x.dtype
+    x = x.float()
+    y = F.rms_norm(x, [x.shape[-1]], eps=eps)
+    return y.to(og_dtype)
