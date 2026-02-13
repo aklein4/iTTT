@@ -53,26 +53,29 @@ class ItttFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad):
-        og_grad = grad.clone()
 
         x, = ctx.saved_tensors
         mod: ItttLinear = ctx.mod
+
+        og_grad = grad.clone()
+        x_dtype = x.dtype
         
         do_loss = mod.momentum is not None
 
         with torch.set_grad_enabled(do_loss):
+                
+            x_leaf = x.float()
+            g = grad.float()
 
             if do_loss:
-                x_leaf = x.detach().requires_grad_(True)
-            else:
-                x_leaf = x
-            g = grad.detach()
-
+                x_leaf = x_leaf.detach().requires_grad_(True)
+            g = g.detach()
+        
             x = simple_rms_norm(x_leaf, eps=mod.eps) # [b, s, i]
             g = simple_rms_norm(g, eps=mod.eps)  # [b, s, r]
 
             # [b, r, i]
-            this_update = g.transpose(-2, -1).to(x.dtype) @ x
+            this_update = g.transpose(-2, -1) @ x
 
             # TODO: this scale is a little weird on the first chunk
             mod.update = (
@@ -85,10 +88,15 @@ class ItttFunction(torch.autograd.Function):
                 pred_g = torch.einsum("boi,bji->bjo", w, x)
                 pred_g = simple_rms_norm(pred_g, eps=mod.eps)
 
-                mod.prev_loss = F.mse_loss(pred_g, g) / mod.num_itt
+                mod.prev_loss = F.mse_loss(pred_g, g) / mod.num_ittt
                 
                 weighted_loss = mod.aux_weight * mod.prev_loss
                 x_grad = torch.autograd.grad(weighted_loss, x_leaf)[0]
+            
+                x_grad = x_grad.to(x_dtype)
+
+            else:
+                x_grad = None
 
         return x_grad, og_grad, None
 
@@ -138,7 +146,7 @@ class ItttLinear(nn.Module):
             torch.randn(self.out_features, rank) / math.sqrt(self.rank)
         )
 
-        self.num_itt = None
+        self.num_ittt = None
 
         # ephemeral state
         self.state = None
@@ -202,8 +210,8 @@ class ItttLinear(nn.Module):
 
     def momentum_step(self, x):
         return (
-            self.momentum_beta * self.momentum.detach() +
-            (1 - self.momentum_beta) * x.to(self.momentum_dtype)
+            self.momentum_beta * self.momentum.to(x.dtype) +
+            (1 - self.momentum_beta) * x
         )
 
     
@@ -214,10 +222,13 @@ class ItttLinear(nn.Module):
                 
         if self.momentum is None:
             self.momentum = (
-                (1 - self.momentum_beta) * self.update.to(self.momentum_dtype)
+                (1 - self.momentum_beta) * self.update.detach().to(self.momentum_dtype)
             )
         else:
-            self.momentum = self.momentum_step(self.update)
+            self.momentum = (
+                self.momentum_beta * self.momentum +
+                (1 - self.momentum_beta) * self.update.detach().to(self.momentum_dtype)
+            )
         self.update = None
 
         # we don't worry about adam-like biased momentum because newton-schulz normalizes anyway
