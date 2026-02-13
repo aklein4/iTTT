@@ -26,6 +26,7 @@ def main(config: omegaconf.DictConfig):
 
         state_model = import_model(config.model.type).from_pretrained(
             config.model.pretrained,
+            subfolder=f"step_{config.model.pretrained_step:012d}"
         )
 
         safe_copy_state(

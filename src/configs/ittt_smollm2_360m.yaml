@@ -14,7 +14,9 @@ batch_size: 32
 model:
 
     type: ittt.modelling_ittt.ItttModel
+
     pretrained: null
+    pretrained_step: null
 
     config:
 
@@ -29,6 +31,8 @@ model:
 
             base_lr: 1e-3
             momentum_beta: 0.75
+            
+            aux_weight: 1.0
 
             _attn_implementation: flash_attention_2
 

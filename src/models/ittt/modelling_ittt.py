@@ -56,20 +56,41 @@ class ItttFunction(torch.autograd.Function):
         og_grad = grad.clone()
 
         x, = ctx.saved_tensors
-        mod = ctx.mod
+        mod: ItttLinear = ctx.mod
         
-        x = simple_rms_norm(x, eps=mod.eps) # [b, s, i]
-        g = F.normalize(grad, dim=-2, eps=mod.eps) * math.sqrt(x.shape[-2])  # [b, s, r]
+        do_loss = mod.momentum is not None
 
-        # [b, r, i]
-        this_update = g.transpose(-2, -1).to(x.dtype) @ x
+        with torch.set_grad_enabled(do_loss):
 
-        # TODO: this scale is a little weird on the first chunk
-        mod.update = (
-            this_update / math.sqrt(x.shape[-2]) # approx 1 std
-        )
+            if do_loss:
+                x_leaf = x.detach().requires_grad_(True)
+            else:
+                x_leaf = x
+            g = grad.detach()
 
-        return None, og_grad, None
+            x = simple_rms_norm(x_leaf, eps=mod.eps) # [b, s, i]
+            g = simple_rms_norm(g, eps=mod.eps)  # [b, s, r]
+
+            # [b, r, i]
+            this_update = g.transpose(-2, -1).to(x.dtype) @ x
+
+            # TODO: this scale is a little weird on the first chunk
+            mod.update = (
+                this_update / math.sqrt(x.shape[-2]) # approx 1 std
+            )
+
+            if do_loss:
+                w = mod.momentum_step(mod.update)
+
+                pred_g = torch.einsum("boi,bji->bjo", w, x)
+                pred_g = simple_rms_norm(pred_g, eps=mod.eps)
+
+                mod.prev_loss = F.mse_loss(pred_g, g) / mod.num_itt
+                
+                weighted_loss = mod.aux_weight * mod.prev_loss
+                x_grad = torch.autograd.grad(weighted_loss, x_leaf)[0]
+
+        return x_grad, og_grad, None
 
         
 class ItttLinear(nn.Module):
@@ -80,6 +101,7 @@ class ItttLinear(nn.Module):
         rank: int,
         base_lr: float,
         momentum_beta: float,
+        aux_weight: float,
         eps: float = 1e-7,
         momentum_dtype=torch.bfloat16,
         state_dtype=torch.float32,
@@ -93,6 +115,7 @@ class ItttLinear(nn.Module):
 
         self.base_lr = base_lr
         self.momentum_beta = momentum_beta
+        self.aux_weight = aux_weight
 
         self.eps = eps
         self.scalar_scaler = math.sqrt(self.in_features)
@@ -115,10 +138,13 @@ class ItttLinear(nn.Module):
             torch.randn(self.out_features, rank) / math.sqrt(self.rank)
         )
 
+        self.num_itt = None
+
         # ephemeral state
         self.state = None
         self.momentum = None
         self.update = None
+        self.prev_loss = None
 
         self.svd_init()
 
@@ -134,6 +160,10 @@ class ItttLinear(nn.Module):
         )
     
 
+    def get_lr(self):
+        return self.base_lr * torch.exp(self.log_lr * self.scalar_scaler)
+
+
     def forward(
         self,
         x: torch.FloatTensor,
@@ -142,11 +172,7 @@ class ItttLinear(nn.Module):
 
         if self.state is not None:
 
-            lr = (
-                self.base_lr *
-                torch.exp(self.log_lr * self.scalar_scaler)
-            )
-            s = lr[None] * self.state
+            s = self.get_lr()[None] * self.state
 
         else:
             s = torch.zeros_like(self.log_lr)[None]
@@ -167,6 +193,18 @@ class ItttLinear(nn.Module):
         self.state = None
         self.momentum = None
         self.update = None
+        self.prev_loss = None
+
+
+    def get_prev_loss(self):
+        return self.prev_loss
+
+
+    def momentum_step(self, x):
+        return (
+            self.momentum_beta * self.momentum.detach() +
+            (1 - self.momentum_beta) * x.to(self.momentum_dtype)
+        )
 
     
     @torch.no_grad()
@@ -179,10 +217,7 @@ class ItttLinear(nn.Module):
                 (1 - self.momentum_beta) * self.update.to(self.momentum_dtype)
             )
         else:
-            self.momentum = (
-                self.momentum_beta * self.momentum +
-                (1 - self.momentum_beta) * self.update.to(self.momentum_dtype)
-            )
+            self.momentum = self.momentum_step(self.update)
         self.update = None
 
         # we don't worry about adam-like biased momentum because newton-schulz normalizes anyway
@@ -195,6 +230,8 @@ class ItttLinear(nn.Module):
             self.state = delta
         else:
             self.state += delta
+
+        self.prev_loss = None
 
 
 class ItttModel(PreTrainedModel):
@@ -212,7 +249,7 @@ class ItttModel(PreTrainedModel):
     _supports_attention_backend = True
 
 
-    def __init__(self, config):
+    def __init__(self, config: ItttConfig):
         super().__init__(config)
 
         self.llama = LlamaForCausalLM.from_pretrained(
@@ -233,6 +270,7 @@ class ItttModel(PreTrainedModel):
                 rank=config.rank,
                 base_lr=config.base_lr,
                 momentum_beta=config.momentum_beta,
+                aux_weight=config.aux_weight,
                 eps=self.eps
             )
             layer.self_attn.o_proj = ItttLinear(
@@ -240,6 +278,7 @@ class ItttModel(PreTrainedModel):
                 rank=config.rank,
                 base_lr=config.base_lr,
                 momentum_beta=config.momentum_beta,
+                aux_weight=config.aux_weight,
                 eps=self.eps
             )
             layer.mlp.down_proj = ItttLinear(
@@ -247,9 +286,18 @@ class ItttModel(PreTrainedModel):
                 rank=config.rank,
                 base_lr=config.base_lr,
                 momentum_beta=config.momentum_beta,
+                aux_weight=config.aux_weight,
                 eps=self.eps
             )
 
+        self.num_ittt = 0
+        for m in self.modules():
+            if isinstance(m, ItttLinear):
+                self.num_ittt += 1
+        for m in self.modules():
+            if isinstance(m, ItttLinear):
+                m.num_ittt = self.num_ittt
+        
         self.post_init()
 
     
@@ -270,7 +318,23 @@ class ItttModel(PreTrainedModel):
         for m in self.modules():
             if isinstance(m, ItttLinear):
                 m.update_state()
-                
+    
+
+    def get_prev_loss(self):
+
+        loss = None
+
+        for m in self.modules():
+            if isinstance(m, ItttLinear):
+
+                l = m.get_prev_loss()
+                if l is not None:
+                    if loss is None:
+                        loss = l
+                    else:
+                        loss = loss + l
+
+        return loss
 
     def forward(self, *args, **kwargs):
         return self.llama(*args, **kwargs)
