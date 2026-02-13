@@ -67,15 +67,20 @@ class ItttFunction(torch.autograd.Function):
             x_leaf = x.float()
             g = grad.float()
 
-            if do_loss:
-                x_leaf = x_leaf.detach().requires_grad_(True)
-            g = g.detach()
+            x_leaf = x_leaf.detach().requires_grad_(do_loss)
+            g = g.detach().requires_grad_(False)
         
-            x = simple_rms_norm(x_leaf, eps=mod.eps) # [b, s, i]
-            g = simple_rms_norm(g, eps=mod.eps)  # [b, s, r]
+            x = simple_rms_norm(
+                x_leaf - x_leaf.mean(-2, keepdim=True),
+                eps=mod.eps
+            ) # [b, s, i]
+            g = simple_rms_norm(
+                g,
+                eps=mod.eps
+            )  # [b, s, r]
 
             # [b, r, i]
-            this_update = g.transpose(-2, -1) @ x
+            this_update = g.transpose(-2, -1) @ x.detach()
 
             # TODO: this scale is a little weird on the first chunk
             mod.update = (
@@ -83,9 +88,11 @@ class ItttFunction(torch.autograd.Function):
             )
 
             if do_loss:
-                w = mod.momentum_step(mod.update)
 
-                pred_g = torch.einsum("boi,bji->bjo", w, x)
+                pred_g = torch.einsum("boi,bji->bjo",
+                    mod.momentum.detach().to(x.dtype),
+                    x
+                )
                 pred_g = simple_rms_norm(pred_g, eps=mod.eps)
 
                 mod.prev_loss = F.mse_loss(pred_g, g) / mod.num_ittt
