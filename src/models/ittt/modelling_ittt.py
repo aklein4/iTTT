@@ -84,7 +84,13 @@ def ittt_op(
 
             targ_g = simple_rms_norm(g, eps=eps)
 
-            g_loss = F.mse_loss(pred_g, targ_g) / num_ittt
+            g_loss = (
+                F.mse_loss(pred_g, targ_g, reduction='none')
+                .mean(dim=-2)
+                .mean(dim=-1)
+                .log()
+                .mean()
+            ) / num_ittt
             
             weighted_loss = aux_weight * g_loss
             x_grad = torch.autograd.grad(weighted_loss, x_leaf)[0]

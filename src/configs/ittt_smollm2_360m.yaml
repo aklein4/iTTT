@@ -32,7 +32,7 @@ model:
             base_lr: 1e-3
             momentum_beta: 0.75
             
-            aux_weight: 10.0
+            aux_weight: 1.0
 
             _attn_implementation: flash_attention_2
 
