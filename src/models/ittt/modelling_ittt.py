@@ -70,7 +70,10 @@ class ItttFunction(torch.autograd.Function):
             x_leaf = x_leaf.detach().requires_grad_(do_loss)
             g = g.detach().requires_grad_(False)
         
-            x = simple_rms_norm(x_leaf, eps=mod.eps) # [b, s, i]
+            x = simple_rms_norm(
+                x_leaf - x_leaf.mean(-2, keepdim=True),
+                eps=mod.eps
+            ) # [b, s, i]
             g = simple_rms_norm(g, eps=mod.eps)  # [b, s, r]
 
             # [b, r, i]
