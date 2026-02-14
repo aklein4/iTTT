@@ -57,17 +57,30 @@ class ItttFunction(torch.autograd.Function):
 
         x, = ctx.saved_tensors
         mod = ctx.mod
-        
+
+        x = x.float()
+        g = grad.float()
+
         x = simple_rms_norm(x, eps=mod.eps) # [b, s, i]
-        g = F.normalize(grad, dim=-2, eps=mod.eps) * math.sqrt(x.shape[-2])  # [b, s, r]
+        g = F.normalize(g, dim=-2, eps=mod.eps) * math.sqrt(x.shape[-2])  # [b, s, r]
+
+        x = x.to(mod.momentum_dtype)
+        g = g.to(mod.momentum_dtype)
 
         # [b, r, i]
-        this_update = g.transpose(-2, -1).to(x.dtype) @ x
+        update = (
+            g.transpose(-2, -1) @ x
+        ) / math.sqrt(x.shape[-2]) # approx 1 std
 
-        # TODO: this scale is a little weird on the first chunk
-        mod.update = (
-            this_update / math.sqrt(x.shape[-2]) # approx 1 std
-        )
+        if mod.momentum is None:
+            mod.momentum = (
+                (1 - mod.momentum_beta) * update
+            )
+        else:
+            mod.momentum = (
+                mod.momentum_beta * mod.momentum +
+                (1 - mod.momentum_beta) * update
+            )
 
         return None, og_grad, None
 
@@ -118,7 +131,6 @@ class ItttLinear(nn.Module):
         # ephemeral state
         self.state = None
         self.momentum = None
-        self.update = None
 
         self.svd_init()
 
@@ -166,25 +178,13 @@ class ItttLinear(nn.Module):
     def reset_state(self):
         self.state = None
         self.momentum = None
-        self.update = None
 
     
     @torch.no_grad()
     def update_state(self):
-        if self.update is None:
+        if self.momentum is None:
             return
                 
-        if self.momentum is None:
-            self.momentum = (
-                (1 - self.momentum_beta) * self.update.to(self.momentum_dtype)
-            )
-        else:
-            self.momentum = (
-                self.momentum_beta * self.momentum +
-                (1 - self.momentum_beta) * self.update.to(self.momentum_dtype)
-            )
-        self.update = None
-
         # we don't worry about adam-like biased momentum because newton-schulz normalizes anyway
         delta = -newtonschulz(
             self.momentum,
