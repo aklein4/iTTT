@@ -12,11 +12,17 @@ class ItttTrainer(BaseTrainer):
     
     model: ItttModel
 
+    half_loss: bool = False
+
 
     def loss(self, input_ids, logits):
         ignore_index = -100
         if self.model.llama.config.pad_token_id is not None:
             ignore_index = self.model.llama.config.pad_token_id
+
+        if self.half_loss:
+            input_ids = torch.chunk(input_ids, 2, dim=0)[1]
+            logits = torch.chunk(logits, 2, dim=0)[1]
 
         return lm_loss(
             input_ids, logits,
@@ -25,24 +31,13 @@ class ItttTrainer(BaseTrainer):
         )
 
 
-    def train_step(
+    def process_chunks(
         self,
-        step: int,
-        optimizer: torch.optim.Optimizer,
-        input_ids: torch.LongTensor,
+        chunks,
+        ac_kwargs,
+        desc="Processing Chunks"
     ):
-        chunks = torch.split(
-            input_ids, self.config.trainer.chunk_size,
-            dim=-1
-        )
-
-        ac_kwargs = {
-            "device_type": str(constants.DEVICE),
-            "dtype": getattr(torch, self.config.trainer.autocast_dtype),
-        }
-
-        self.model.reset_state()
-
+        
         # first chunk
         with torch.autocast(**ac_kwargs):
 
@@ -60,7 +55,7 @@ class ItttTrainer(BaseTrainer):
         total_loss = loss.item()
 
         # remaining chunks
-        for i in tqdm(range(1, len(chunks)), desc="Processing Chunks", leave=False):
+        for i in tqdm(range(1, len(chunks)), desc=desc, leave=False):
             in_chunk = chunks[i-1]
             out_chunk = chunks[i]
             all_chunk = torch.cat([in_chunk, out_chunk], dim=-1)
@@ -83,6 +78,45 @@ class ItttTrainer(BaseTrainer):
             aux[f"lm_loss/chunk_{i:02d}"] = loss.item()
             total_loss += loss.item()
         
+        return total_loss, aux
+
+
+    def train_step(
+        self,
+        step: int,
+        optimizer: torch.optim.Optimizer,
+        input_ids: torch.LongTensor,
+    ):
+        
+        # get the arguments
+        chunks = torch.split(
+            input_ids, self.config.trainer.chunk_size,
+            dim=-1
+        )
+        ac_kwargs = {
+            "device_type": str(constants.DEVICE),
+            "dtype": getattr(torch, self.config.trainer.autocast_dtype),
+        }
+
+        # fill last_state_grad
+        self.model.reset_state()
+        # self.process_chunks(chunks, ac_kwargs, desc="Filling State Grads")
+        total_loss, aux = self.process_chunks(chunks, ac_kwargs, desc="Filling State Grads")
+        self.model.finalize_state()
+        self.model.zero_grad()
+
+        # process again with the actual gradients
+        double_chunks = torch.split(
+            torch.cat([input_ids, input_ids], dim=0),
+            self.config.trainer.chunk_size,
+            dim=-1
+        )
+        self.half_loss = True
+        total_loss, aux = self.process_chunks(double_chunks, ac_kwargs)
+        self.half_loss = False
+        aux["relative_grad_error"] = self.model.relative_grad_error()
+        self.model.reset_state()
+        
         # regular optimization step
         if step == 0:
             self.debug_gradients()
@@ -96,9 +130,6 @@ class ItttTrainer(BaseTrainer):
 
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
-
-        # do this again just in case
-        self.model.reset_state()
 
         # finalize outputs
         final_loss = total_loss / len(chunks)
