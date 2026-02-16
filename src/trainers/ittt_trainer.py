@@ -169,7 +169,7 @@ class ItttTrainer(BaseTrainer):
         for decade, values in encoded_decades.items():
             aux[f"grouped_encoded_loss/decade_{decade}"] = sum(values) / len(values)
 
-        aux["encoded_total_loss"] = encoded_total_loss
+        aux["encoded_total_loss"] = encoded_total_loss / len(chunks)
 
         return final_loss, aux
     
