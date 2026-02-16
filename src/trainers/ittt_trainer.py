@@ -98,7 +98,7 @@ class ItttTrainer(BaseTrainer):
         encoded_total_loss = loss.item()
 
         # remaining chunks
-        for i in tqdm(range(1, len(chunks)), desc="Processing Chunks", leave=False):
+        for i in tqdm(range(1, len(chunks)), desc="Processing Chunks Again", leave=False):
             in_chunk = chunks[i-1]
             out_chunk = chunks[i]
             all_chunk = torch.cat([in_chunk, out_chunk], dim=-1)
@@ -166,7 +166,7 @@ class ItttTrainer(BaseTrainer):
 
         for decade, values in decades.items():
             aux[f"grouped_lm_loss/decade_{decade}"] = sum(values) / len(values)
-        for decade, value in encoded_decades.items():
+        for decade, values in encoded_decades.items():
             aux[f"grouped_encoded_loss/decade_{decade}"] = sum(values) / len(values)
 
         aux["encoded_total_loss"] = encoded_total_loss
