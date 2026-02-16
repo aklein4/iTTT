@@ -58,6 +58,9 @@ class ItttFunction(torch.autograd.Function):
         x, = ctx.saved_tensors
         mod = ctx.mod
 
+        if mod.disable_updates:
+            return None, og_grad, None
+
         x = x.float()
         g = grad.float()
 
@@ -131,6 +134,8 @@ class ItttLinear(nn.Module):
         # ephemeral state
         self.state = None
         self.momentum = None
+
+        self.disable_updates = False
 
         self.svd_init()
 

@@ -44,6 +44,7 @@ class ItttTrainer(BaseTrainer):
         self.model.reset_state()
 
         # first chunk
+        self.model.disable_updates = False
         with torch.autocast(**ac_kwargs):
 
             logits = self.model(
@@ -84,6 +85,7 @@ class ItttTrainer(BaseTrainer):
             total_loss += loss.item()
 
         # do things again without updating
+        self.model.disable_updates = True
         with torch.autocast(**ac_kwargs):
 
             logits = self.model(
