@@ -58,14 +58,11 @@ class ItttFunction(torch.autograd.Function):
         x, = ctx.saved_tensors
         mod = ctx.mod
 
-        x = x.float()
-        g = grad.float()
+        x = x.to(mod.momentum_dtype)
+        g = g.to(mod.momentum_dtype)
 
         x = simple_rms_norm(x, eps=mod.eps) # [b, s, i]
         g = F.normalize(g, dim=-2, eps=mod.eps) * math.sqrt(x.shape[-2])  # [b, s, r]
-
-        x = x.to(mod.momentum_dtype)
-        g = g.to(mod.momentum_dtype)
 
         # [b, r, i]
         update = (
@@ -124,6 +121,9 @@ class ItttLinear(nn.Module):
         self.log_lr = nn.Parameter(
             torch.zeros(rank, self.in_features)
         )
+        self.momentum_log_lr = nn.Parameter(
+            torch.zeros(rank, self.in_features)
+        )
         self.out_proj = nn.Parameter(
             torch.randn(self.out_features, rank) / math.sqrt(self.rank)
         )
@@ -131,6 +131,7 @@ class ItttLinear(nn.Module):
         # ephemeral state
         self.state = None
         self.momentum = None
+        self.delta = None
 
         self.svd_init()
 
@@ -154,11 +155,10 @@ class ItttLinear(nn.Module):
 
         if self.state is not None:
 
-            lr = (
-                self.base_lr *
-                torch.exp(self.log_lr * self.scalar_scaler)
+            s = self.base_lr * (
+                torch.exp(self.log_lr * self.scalar_scaler)[None] * self.state +
+                torch.exp(self.momentum_log_lr * self.scalar_scaler)[None] * self.delta
             )
-            s = lr[None] * self.state
 
         else:
             s = torch.zeros_like(self.log_lr)[None]
@@ -178,6 +178,7 @@ class ItttLinear(nn.Module):
     def reset_state(self):
         self.state = None
         self.momentum = None
+        self.delta = None
 
     
     @torch.no_grad()
@@ -186,15 +187,17 @@ class ItttLinear(nn.Module):
             return
                 
         # we don't worry about adam-like biased momentum because newton-schulz normalizes anyway
-        delta = -newtonschulz(
+        self.delta = -newtonschulz(
             self.momentum,
             eps=self.eps
-        ).to(self.state_dtype)
+        )
+        
+        f_delta = self.delta.to(self.state_dtype)
 
         if self.state is None:
-            self.state = delta
+            self.state = f_delta
         else:
-            self.state += delta
+            self.state += f_delta
 
 
 class ItttModel(PreTrainedModel):
