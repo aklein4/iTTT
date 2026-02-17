@@ -52,8 +52,8 @@ class ItttFunction(torch.autograd.Function):
     
 
     @staticmethod
-    def backward(ctx, grad):
-        og_grad = grad.clone()
+    def backward(ctx, g):
+        og_grad = g.clone()
 
         x, = ctx.saved_tensors
         mod = ctx.mod
