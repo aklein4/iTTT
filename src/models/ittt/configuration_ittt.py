@@ -18,6 +18,8 @@ class ItttConfig(PretrainedConfig):
             The base learning rate for iTTT updates.
         momentum_beta (`float`, *optional*, defaults to 0.75):
             The beta parameter for momentum in iTTT updates.
+        impulse_scale (`float`, *optional*, defaults to 0.5):
+            The scale of the impulse applied to the model parameters during iTTT updates.
     ```"""
 
     model_type = "ittt"
@@ -30,6 +32,7 @@ class ItttConfig(PretrainedConfig):
         rank: int=256,
         base_lr: float=1e-3,
         momentum_beta: float=0.75,
+        impulse_scale: float=0.5,
         **kwargs,
     ):
         
@@ -40,5 +43,6 @@ class ItttConfig(PretrainedConfig):
 
         self.base_lr = base_lr
         self.momentum_beta = momentum_beta
+        self.impulse_scale = impulse_scale
 
         super().__init__(**kwargs)

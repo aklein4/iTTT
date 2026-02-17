@@ -72,6 +72,7 @@ class ItttFunction(torch.autograd.Function):
             g.transpose(-2, -1) @ x
         ) / math.sqrt(x.shape[-2]) # approx 1 std
 
+        mod.update = update
         if mod.momentum is None:
             mod.momentum = (
                 (1 - mod.momentum_beta) * update
@@ -93,6 +94,7 @@ class ItttLinear(nn.Module):
         rank: int,
         base_lr: float,
         momentum_beta: float,
+        impulse_scale: float,
         eps: float = 1e-7,
         momentum_dtype=torch.bfloat16,
         state_dtype=torch.float32,
@@ -106,6 +108,7 @@ class ItttLinear(nn.Module):
 
         self.base_lr = base_lr
         self.momentum_beta = momentum_beta
+        self.impulse_scale = impulse_scale
 
         self.eps = eps
         self.scalar_scaler = math.sqrt(self.in_features)
@@ -131,6 +134,7 @@ class ItttLinear(nn.Module):
         # ephemeral state
         self.state = None
         self.momentum = None
+        self.update = None
 
         self.svd_init()
 
@@ -178,16 +182,23 @@ class ItttLinear(nn.Module):
     def reset_state(self):
         self.state = None
         self.momentum = None
+        self.update = None
 
     
     @torch.no_grad()
     def update_state(self):
-        if self.momentum is None:
+        if self.update or self.momentum is None:
             return
-                
+
+        # total scale here does not matter
+        response = (
+            self.impulse_scale * self.update +
+            (1 - self.impulse_scale) * self.momentum
+        )
+
         # we don't worry about adam-like biased momentum because newton-schulz normalizes anyway
         delta = -newtonschulz(
-            self.momentum,
+            response,
             eps=self.eps
         ).to(self.state_dtype)
 
@@ -233,6 +244,7 @@ class ItttModel(PreTrainedModel):
                 rank=config.rank,
                 base_lr=config.base_lr,
                 momentum_beta=config.momentum_beta,
+                impulse_scale=config.impulse_scale,
                 eps=self.eps
             )
             layer.self_attn.o_proj = ItttLinear(
@@ -240,6 +252,7 @@ class ItttModel(PreTrainedModel):
                 rank=config.rank,
                 base_lr=config.base_lr,
                 momentum_beta=config.momentum_beta,
+                impulse_scale=config.impulse_scale,
                 eps=self.eps
             )
             layer.mlp.down_proj = ItttLinear(
@@ -247,6 +260,7 @@ class ItttModel(PreTrainedModel):
                 rank=config.rank,
                 base_lr=config.base_lr,
                 momentum_beta=config.momentum_beta,
+                impulse_scale=config.impulse_scale,
                 eps=self.eps
             )
 
