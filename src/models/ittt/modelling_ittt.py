@@ -67,20 +67,15 @@ class ItttFunction(torch.autograd.Function):
         x = x.to(mod.momentum_dtype)
         g = g.to(mod.momentum_dtype)
 
-        # [b, r, i]
-        update = (
-            g.transpose(-2, -1) @ x
-        ) / math.sqrt(x.shape[-2]) # approx 1 std
-
         if mod.momentum is None:
-            mod.momentum = (
-                (1 - mod.momentum_beta) * update
-            )
-        else:
-            mod.momentum = (
-                mod.momentum_beta * mod.momentum +
-                (1 - mod.momentum_beta) * update
-            )
+            mod.momentum = torch.zeros_like(g.transpose(-2, -1) @ x)
+
+        momentum_pred = torch.einsum("boi,bji->bjo", mod.momentum, x)
+        momentum_delta = g - momentum_pred
+
+        mod.momentum += (1 - mod.momentum_beta) * (
+            momentum_delta.transpose(-2, -1) @ x
+        ) / math.sqrt(x.shape[-2])
 
         return None, og_grad, None
 
@@ -185,7 +180,7 @@ class ItttLinear(nn.Module):
         if self.momentum is None:
             return
                 
-        # we don't worry about adam-like biased momentum because newton-schulz normalizes anyway
+        # negative for gradient DESCENT
         delta = -newtonschulz(
             self.momentum,
             eps=self.eps
