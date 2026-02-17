@@ -61,13 +61,14 @@ class ItttFunction(torch.autograd.Function):
         with torch.enable_grad():
 
             z_leaf = torch.zeros(
-                x.shape[0], mod.rank, x.shape[2],
+                x.shape[0], x.shape[1], mod.rank,
                 device=x.device,
                 dtype=mod.momentum_dtype,
                 requires_grad=True
             )
             ema_proj = mod.ema_out_proj.clone().detach().to(mod.momentum_dtype).requires_grad_(False)
 
+            print(z_leaf.shape, ema_proj.shape)
             pred_y_lora = F.linear(z_leaf, ema_proj)
 
             g = torch.autograd.grad(
