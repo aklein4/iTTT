@@ -187,7 +187,7 @@ class ItttLinear(nn.Module):
     
     @torch.no_grad()
     def update_state(self):
-        if self.update or self.momentum is None:
+        if self.update is None or self.momentum is None:
             return
 
         # total scale here does not matter

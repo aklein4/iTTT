@@ -31,7 +31,7 @@ model:
 
             base_lr: 1e-3
             momentum_beta: 0.75 # 0.9
-            impulse_scale: 0.5
+            impulse_scale: 0.25
 
             _attn_implementation: flash_attention_2
 
