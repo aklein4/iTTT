@@ -30,7 +30,8 @@ model:
             rank: 256
 
             base_lr: 1e-3
-            momentum_beta: 0.9
+            momentum_beta: 0.75 # 0.9
+            ema_beta: 0.99
 
             _attn_implementation: flash_attention_2
 

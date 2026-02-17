@@ -97,6 +97,8 @@ class ItttTrainer(BaseTrainer):
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
 
+        self.model.ema_update()
+
         # do this again just in case
         self.model.reset_state()
 

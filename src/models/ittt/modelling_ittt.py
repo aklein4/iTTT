@@ -45,10 +45,10 @@ def newtonschulz(
 class ItttFunction(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, x, z, mod):
+    def forward(ctx, x, y_lora, mod):
         ctx.save_for_backward(x)
         ctx.mod = mod
-        return z.clone()
+        return y_lora.clone()
     
 
     @staticmethod
@@ -58,8 +58,26 @@ class ItttFunction(torch.autograd.Function):
         x, = ctx.saved_tensors
         mod = ctx.mod
 
+        with torch.enable_grad():
+
+            z_leaf = torch.zeros(
+                x.shape[0], mod.rank, x.shape[2],
+                device=x.device,
+                dtype=mod.momentum_dtype,
+                requires_grad=True
+            )
+            ema_proj = mod.ema_out_proj.clone().detach().to(mod.momentum_dtype).requires_grad_(False)
+
+            pred_y_lora = F.linear(z_leaf, ema_proj)
+
+            g = torch.autograd.grad(
+                pred_y_lora,
+                z_leaf,
+                grad.to(mod.momentum_dtype),
+            )[0].detach()
+
         x = x.float()
-        g = grad.float()
+        g = g.float()
 
         x = simple_rms_norm(x, eps=mod.eps) # [b, s, i]
         g = F.normalize(g, dim=-2, eps=mod.eps) * math.sqrt(x.shape[-2])  # [b, s, r]
@@ -93,6 +111,7 @@ class ItttLinear(nn.Module):
         rank: int,
         base_lr: float,
         momentum_beta: float,
+        ema_beta: float,
         eps: float = 1e-7,
         momentum_dtype=torch.bfloat16,
         state_dtype=torch.float32,
@@ -106,6 +125,7 @@ class ItttLinear(nn.Module):
 
         self.base_lr = base_lr
         self.momentum_beta = momentum_beta
+        self.ema_beta = ema_beta
 
         self.eps = eps
         self.scalar_scaler = math.sqrt(self.in_features)
@@ -127,6 +147,12 @@ class ItttLinear(nn.Module):
         self.out_proj = nn.Parameter(
             torch.randn(self.out_features, rank) / math.sqrt(self.rank)
         )
+        self.register_buffer(
+            "ema_out_proj",
+            self.out_proj.data.clone(),
+            persistent=True
+        )
+        self.ema_out_proj: nn.Buffer
 
         # ephemeral state
         self.state = None
@@ -144,7 +170,8 @@ class ItttLinear(nn.Module):
             u[:, :self.rank] *
             s[None, :self.rank]
         )
-    
+        self.ema_out_proj.copy_(self.out_proj.data.clone())
+
 
     def forward(
         self,
@@ -164,14 +191,23 @@ class ItttLinear(nn.Module):
             s = torch.zeros_like(self.log_lr)[None]
 
         z = torch.einsum("boi,bji->bjo", s, x)
-        z = ItttFunction.apply(x, z, self)
 
         y_lora = F.linear(z, self.out_proj)
+        y_lora = ItttFunction.apply(x, y_lora, self)
+
         y_base = F.linear(x, self.weight, self.bias)
 
         y = y_base + y_lora
 
         return y
+
+
+    @torch.no_grad()
+    def ema_update(self):
+        self.ema_out_proj.copy_(
+            self.ema_beta * self.ema_out_proj +
+            (1 - self.ema_beta) * self.out_proj.data
+        )
 
     
     @torch.no_grad()
@@ -233,6 +269,7 @@ class ItttModel(PreTrainedModel):
                 rank=config.rank,
                 base_lr=config.base_lr,
                 momentum_beta=config.momentum_beta,
+                ema_beta=config.ema_beta,
                 eps=self.eps
             )
             layer.self_attn.o_proj = ItttLinear(
@@ -240,6 +277,7 @@ class ItttModel(PreTrainedModel):
                 rank=config.rank,
                 base_lr=config.base_lr,
                 momentum_beta=config.momentum_beta,
+                ema_beta=config.ema_beta,
                 eps=self.eps
             )
             layer.mlp.down_proj = ItttLinear(
@@ -247,6 +285,7 @@ class ItttModel(PreTrainedModel):
                 rank=config.rank,
                 base_lr=config.base_lr,
                 momentum_beta=config.momentum_beta,
+                ema_beta=config.ema_beta,
                 eps=self.eps
             )
 
@@ -257,6 +296,12 @@ class ItttModel(PreTrainedModel):
         # We don't want to re-initialize the weights, so we override this method to do nothing.
         return
 
+
+    @torch.no_grad()
+    def ema_update(self):
+        for m in self.modules():
+            if isinstance(m, ItttLinear):
+                m.ema_update()
 
     @torch.no_grad()
     def reset_state(self):
