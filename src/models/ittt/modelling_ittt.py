@@ -52,14 +52,14 @@ class ItttFunction(torch.autograd.Function):
     
 
     @staticmethod
-    def backward(ctx, grad):
-        og_grad = grad.clone()
+    def backward(ctx, g):
+        og_grad = g.clone()
 
         x, = ctx.saved_tensors
         mod = ctx.mod
 
         x = x.float()
-        g = grad.float()
+        g = g.float()
 
         x = simple_rms_norm(x, eps=mod.eps) # [b, s, i]
         g = F.normalize(g, dim=-2, eps=mod.eps) * math.sqrt(x.shape[-2])  # [b, s, r]
