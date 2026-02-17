@@ -58,14 +58,12 @@ class ItttFunction(torch.autograd.Function):
         x, = ctx.saved_tensors
         mod = ctx.mod
 
-        x = x.float()
-        g = g.float()
+        x = x.to(mod.momentum_dtype)[:, :-1]
+        g = g.to(mod.momentum_dtype)[:, :-1] # cut off last as it is zero
 
+        x = (x - x.mean(dim=-2, keepdim=True)) / (x.std(dim=-2, keepdim=True) + mod.eps)
         x = simple_rms_norm(x, eps=mod.eps) # [b, s, i]
         g = F.normalize(g, dim=-2, eps=mod.eps) * math.sqrt(x.shape[-2])  # [b, s, r]
-
-        x = x.to(mod.momentum_dtype)
-        g = g.to(mod.momentum_dtype)
 
         if mod.momentum is None:
             mod.momentum = torch.zeros_like(g.transpose(-2, -1) @ x)
@@ -73,9 +71,11 @@ class ItttFunction(torch.autograd.Function):
         momentum_pred = torch.einsum("boi,bji->bjo", mod.momentum, x)
         momentum_delta = g - momentum_pred
 
-        mod.momentum += (1 - mod.momentum_beta) * (
+        momentum_update = (
             momentum_delta.transpose(-2, -1) @ x
         ) / math.sqrt(x.shape[-2])
+
+        mod.momentum += 1e-4 * momentum_update
 
         return None, og_grad, None
 
@@ -126,6 +126,8 @@ class ItttLinear(nn.Module):
         # ephemeral state
         self.state = None
         self.momentum = None
+
+        self.verbose = False
 
         self.svd_init()
 
@@ -244,6 +246,8 @@ class ItttModel(PreTrainedModel):
                 momentum_beta=config.momentum_beta,
                 eps=self.eps
             )
+
+        self.llama.model.layers[self.start_layer+5].mlp.down_proj.verbose = True
 
         self.post_init()
 

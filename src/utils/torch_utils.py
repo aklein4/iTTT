@@ -125,5 +125,5 @@ def shift(
     return torch.cat(l, dim=dim)
 
 
-def simple_rms_norm(x, eps=1e-7):
-    return F.rms_norm(x, [x.shape[-1]], eps=eps)
+def simple_rms_norm(x, eps=1e-7, nd=1):
+    return F.rms_norm(x, x.shape[-nd:], eps=eps)
