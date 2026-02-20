@@ -85,7 +85,7 @@ class ItttFunction(torch.autograd.Function):
 
         setattr(mod, momentum_name, momentum)
 
-        return None, og_grad, None
+        return None, og_grad, None, None
 
         
 class ItttLinear(nn.Module):
@@ -163,7 +163,7 @@ class ItttLinear(nn.Module):
         t = torch.sqrt(s)
 
         self.down_base.copy_(
-            v[:self.rank, :],
+            v[:self.rank, :] *
             t[:self.rank, None]
         )
         self.down_lr_scale.copy_(
@@ -172,14 +172,18 @@ class ItttLinear(nn.Module):
         )
 
         self.up_base.copy_(
-            u[:, :self.rank],
+            u[:, :self.rank] *
             t[None, :self.rank]
         )
         self.up_lr_scale.copy_(
             (self.up_base.norm() / math.sqrt(self.out_features * self.rank))
             / (1 / math.sqrt(self.out_features))
         )
-    
+
+        self.weight.sub_(
+            self.up_base @ self.down_base
+        )
+
 
     def forward(
         self,
@@ -190,21 +194,21 @@ class ItttLinear(nn.Module):
 
         if self.down_state is not None:
 
-            s_down = (
+            s_down = self.down_base + (
                 self.base_lr *
                 self.down_lr_scale *
                 torch.exp(self.down_log_lr * self.scalar_scaler)
             )[None] * self.down_state
 
-            s_up = (
+            s_up = self.up_base + (
                 self.base_lr *
                 self.up_lr_scale *
                 torch.exp(self.up_log_lr * self.scalar_scaler)
             )[None] * self.up_state
 
         else:
-            s_down = torch.zeros_like(self.down_log_lr)[None]
-            s_up = torch.zeros_like(self.up_log_lr)[NOne]
+            s_down = self.down_base[None]
+            s_up = self.up_base[None]
 
         z = torch.einsum("boi,bji->bjo", s_down, x)
         z = ItttFunction.apply(x, z, self, "down")
