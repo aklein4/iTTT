@@ -45,42 +45,45 @@ def newtonschulz(
 class ItttFunction(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, x, z, mod):
+    def forward(ctx, x, y, mod, prefix):
         ctx.save_for_backward(x)
         ctx.mod = mod
-        return z.clone()
+        ctx.prefix = prefix
+        return y.clone()
     
 
     @staticmethod
-    def backward(ctx, grad):
-        og_grad = grad.clone()
+    def backward(ctx, g):
+        og_grad = g.clone()
 
         x, = ctx.saved_tensors
         mod = ctx.mod
 
-        x = x.float()
-        g = grad.float()
+        x = x.to(mod.momentum_dtype)
+        g = g.to(mod.momentum_dtype)
 
         x = simple_rms_norm(x, eps=mod.eps) # [b, s, i]
         g = F.normalize(g, dim=-2, eps=mod.eps) * math.sqrt(x.shape[-2])  # [b, s, r]
-
-        x = x.to(mod.momentum_dtype)
-        g = g.to(mod.momentum_dtype)
 
         # [b, r, i]
         update = (
             g.transpose(-2, -1) @ x
         ) / math.sqrt(x.shape[-2]) # approx 1 std
 
-        if mod.momentum is None:
-            mod.momentum = (
+        momentum_name = f"{ctx.prefix}_momentum"
+        momentum = getattr(mod, momentum_name)
+
+        if momentum is None:
+            momentum = (
                 (1 - mod.momentum_beta) * update
             )
         else:
-            mod.momentum = (
-                mod.momentum_beta * mod.momentum +
+            momentum = (
+                mod.momentum_beta * momentum +
                 (1 - mod.momentum_beta) * update
             )
+
+        setattr(mod, momentum_name, momentum)
 
         return None, og_grad, None
 
@@ -121,16 +124,34 @@ class ItttLinear(nn.Module):
             self.register_parameter("bias", None)
         
         # ittt params
-        self.log_lr = nn.Parameter(
+        self.register_buffer(
+            "down_lr_scale", torch.ones(1), persistent=True
+        )
+        self.down_lr_scale: nn.Buffer
+        self.down_log_lr = nn.Parameter(
             torch.zeros(rank, self.in_features)
         )
-        self.out_proj = nn.Parameter(
-            torch.randn(self.out_features, rank) / math.sqrt(self.rank)
+        self.down_base = nn.Parameter(
+            torch.randn(rank, self.in_features) / math.sqrt(self.in_features)
+        )
+
+        self.register_buffer(
+            "up_lr_scale", torch.ones(1), persistent=True
+        )
+        self.up_lr_scale: nn.Buffer
+        self.up_log_lr = nn.Parameter(
+            torch.zeros(self.out_features, rank)
+        )
+        self.up_base = nn.Parameter(
+            torch.randn(self.out_features, rank) / math.sqrt(rank)
         )
 
         # ephemeral state
-        self.state = None
-        self.momentum = None
+        self.down_state = None
+        self.down_momentum = None
+
+        self.up_state = None
+        self.up_momentum = None
 
         self.svd_init()
 
@@ -139,10 +160,24 @@ class ItttLinear(nn.Module):
     def svd_init(self):
 
         u, s, v = torch.linalg.svd(self.weight, full_matrices=False)
+        t = torch.sqrt(s)
 
-        self.out_proj.copy_(
-            u[:, :self.rank] *
-            s[None, :self.rank]
+        self.down_base.copy_(
+            v[:self.rank, :],
+            t[:self.rank, None]
+        )
+        self.down_lr_scale.copy_(
+            (self.down_base.norm() / math.sqrt(self.in_features * self.rank)) # around 1
+            / (1 / math.sqrt(self.in_features))
+        )
+
+        self.up_base.copy_(
+            u[:, :self.rank],
+            t[None, :self.rank]
+        )
+        self.up_lr_scale.copy_(
+            (self.up_base.norm() / math.sqrt(self.out_features * self.rank))
+            / (1 / math.sqrt(self.out_features))
         )
     
 
@@ -151,22 +186,32 @@ class ItttLinear(nn.Module):
         x: torch.FloatTensor,
     ) -> torch.FloatTensor:
         assert x.ndim == 3, "x must be 3D (batch, seq_len, dim)"
+        assert (self.down_state is None) == (self.up_state is None), "both up and down state must be None or not None"
 
-        if self.state is not None:
+        if self.down_state is not None:
 
-            lr = (
+            s_down = (
                 self.base_lr *
-                torch.exp(self.log_lr * self.scalar_scaler)
-            )
-            s = lr[None] * self.state
+                self.down_lr_scale *
+                torch.exp(self.down_log_lr * self.scalar_scaler)
+            )[None] * self.down_state
+
+            s_up = (
+                self.base_lr *
+                self.up_lr_scale *
+                torch.exp(self.up_log_lr * self.scalar_scaler)
+            )[None] * self.up_state
 
         else:
-            s = torch.zeros_like(self.log_lr)[None]
+            s_down = torch.zeros_like(self.down_log_lr)[None]
+            s_up = torch.zeros_like(self.up_log_lr)[NOne]
 
-        z = torch.einsum("boi,bji->bjo", s, x)
-        z = ItttFunction.apply(x, z, self)
+        z = torch.einsum("boi,bji->bjo", s_down, x)
+        z = ItttFunction.apply(x, z, self, "down")
 
-        y_lora = F.linear(z, self.out_proj)
+        y_lora = torch.einsum("boi,bji->bjo", s_up, z)
+        y_lora = ItttFunction.apply(z, y_lora, self, "up")
+
         y_base = F.linear(x, self.weight, self.bias)
 
         y = y_base + y_lora
@@ -176,25 +221,40 @@ class ItttLinear(nn.Module):
     
     @torch.no_grad()
     def reset_state(self):
-        self.state = None
-        self.momentum = None
+        self.down_state = None
+        self.down_momentum = None
+
+        self.up_state = None
+        self.up_momentum = None
 
     
     @torch.no_grad()
     def update_state(self):
-        if self.momentum is None:
+        assert (self.down_state is None) == (self.up_state is None), "both up and down state must be None or not None"
+
+        if self.down_momentum is None:
             return
                 
         # we don't worry about adam-like biased momentum because newton-schulz normalizes anyway
-        delta = -newtonschulz(
-            self.momentum,
+        down_delta = -newtonschulz(
+            self.down_momentum,
             eps=self.eps
         ).to(self.state_dtype)
 
-        if self.state is None:
-            self.state = delta
+        if self.down_state is None:
+            self.down_state = down_delta
         else:
-            self.state += delta
+            self.down_state += down_delta
+
+        up_delta = -newtonschulz(
+            self.up_momentum,
+            eps=self.eps
+        ).to(self.state_dtype)
+
+        if self.up_state is None:
+            self.up_state = up_delta
+        else:
+            self.up_state += up_delta
 
 
 class ItttModel(PreTrainedModel):
