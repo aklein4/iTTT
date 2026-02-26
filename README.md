@@ -1,2 +1,5 @@
 # iTTT
-Great repository descriptions are short and memorable.
+
+Implicit Test-Time Training for infinite context sequence modelling and continue learning. Currently a work in progress.
+
+Built on the [aklein4/ml-skeleton](https://github.com/aklein4/ml-skeleton) training framework.
