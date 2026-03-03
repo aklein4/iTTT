@@ -68,19 +68,18 @@ class ItttFunction(torch.autograd.Function):
         g = g.to(mod.momentum_dtype)
 
         # [b, r, i]
-        update = (
+        mod.update = (
             g.transpose(-2, -1) @ x
         ) / math.sqrt(x.shape[-2]) # approx 1 std
 
         if mod.momentum is None:
-            mod.momentum = (
-                (1 - mod.momentum_beta) * update
-            )
-        else:
-            mod.momentum = (
-                mod.momentum_beta * mod.momentum +
-                (1 - mod.momentum_beta) * update
-            )
+            mod.momentum = torch.zeros_like(mod.update)
+        
+        mod.momentum = torch.lerp(
+            mod.momentum,
+            mod.update,
+            1 - mod.momentum_beta
+        )
 
         return None, og_grad, None
 
@@ -131,6 +130,7 @@ class ItttLinear(nn.Module):
         # ephemeral state
         self.state = None
         self.momentum = None
+        self.update = None
 
         self.svd_init()
 
@@ -184,10 +184,16 @@ class ItttLinear(nn.Module):
     def update_state(self):
         if self.momentum is None:
             return
-                
+        
+        delta = torch.lerp(
+            self.update,
+            self.momentum,
+            self.momentum_beta
+        )
+
         # we don't worry about adam-like biased momentum because newton-schulz normalizes anyway
         delta = -newtonschulz(
-            self.momentum,
+            delta,
             eps=self.eps
         ).to(self.state_dtype)
 
@@ -195,6 +201,8 @@ class ItttLinear(nn.Module):
             self.state = delta
         else:
             self.state += delta
+
+        self.update = None
 
 
 class ItttModel(PreTrainedModel):
