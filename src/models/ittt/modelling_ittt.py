@@ -9,6 +9,8 @@ from transformers.modeling_utils import PreTrainedModel
 from models.ittt.configuration_ittt import ItttConfig
 from models.reference_llama.modelling_llama import LlamaForCausalLM, LlamaDecoderLayer
 from utils.torch_utils import simple_rms_norm
+from utils.training_utils import lm_loss
+from tqdm import tqdm
 
 
 @torch.compile(fullgraph=True, mode="reduce-overhead")
@@ -183,8 +185,10 @@ class ItttLinear(nn.Module):
     @torch.no_grad()
     def update_state(self):
         if self.momentum is None:
+            print("WARNING: Momentum is None, skipping update.")
             return
         
+        # nesterov-style momentum update
         delta = torch.lerp(
             self.update,
             self.momentum,
@@ -243,6 +247,20 @@ class ItttModel(PreTrainedModel):
                 momentum_beta=config.momentum_beta,
                 eps=self.eps
             )
+            layer.self_attn.k_proj = ItttLinear(
+                layer.self_attn.k_proj,
+                rank=min(config.rank, layer.self_attn.k_proj.in_features, layer.self_attn.k_proj.out_features),
+                base_lr=config.base_lr,
+                momentum_beta=config.momentum_beta,
+                eps=self.eps
+            )
+            layer.self_attn.v_proj = ItttLinear(
+                layer.self_attn.v_proj,
+                rank=min(config.rank, layer.self_attn.v_proj.in_features, layer.self_attn.v_proj.out_features),
+                base_lr=config.base_lr,
+                momentum_beta=config.momentum_beta,
+                eps=self.eps
+            )
             layer.self_attn.o_proj = ItttLinear(
                 layer.self_attn.o_proj,
                 rank=config.rank,
@@ -282,4 +300,87 @@ class ItttModel(PreTrainedModel):
 
     def forward(self, *args, **kwargs):
         return self.llama(*args, **kwargs)
+    
+
+    def compute_logits(
+        self,
+        input_ids: torch.LongTensor,
+        chunk_size: int,
+        labels = None,
+        ignore_index: int = -100,
+        verbose: bool = False,
+        do_update: bool = True,
+    ):
         
+        if labels is None:
+            labels = input_ids
+        inputs_for_model = torch.where(
+            input_ids == ignore_index,
+            torch.zeros_like(input_ids),
+            input_ids,
+        )
+
+        input_chunks = torch.split(inputs_for_model, chunk_size, dim=-1)
+        label_chunks = torch.split(labels, chunk_size, dim=-1)
+
+        ac_kwargs = {
+            "device_type": str(input_ids.device),
+            "dtype": torch.bfloat16,
+        }
+
+        self.reset_state()
+
+        all_logits = []
+
+        # first chunk
+        with torch.autocast(**ac_kwargs):
+
+            logits = self(
+                input_chunks[0],
+                logits_to_keep=slice(0, -1)
+            ).logits
+            all_logits.append(logits.detach().to(torch.bfloat16))
+
+            loss = lm_loss(
+                label_chunks[0].to(logits.device), logits,
+                shift_logits=False,
+                ignore_index=ignore_index,
+            )
+
+        loss.backward()
+
+        # remaining chunks
+        for i in tqdm(range(1, len(input_chunks)), desc="Processing Chunks", leave=False, disable=(not verbose)):
+            
+            first_chunk = input_chunks[i-1]
+            second_chunk = input_chunks[i]
+            all_chunk = torch.cat([first_chunk, second_chunk], dim=-1)
+
+            first_labels = label_chunks[i-1]
+            second_labels = label_chunks[i]
+            all_labels = torch.cat([first_labels, second_labels], dim=-1)
+
+            if do_update:
+                self.update_state()
+
+            with torch.autocast(**ac_kwargs):
+
+                logits = self(
+                    all_chunk,
+                    logits_to_keep=slice(first_chunk.shape[-1]-1, -1)
+                ).logits
+                all_logits.append(logits.detach().to(torch.bfloat16))
+
+                loss = lm_loss(
+                    all_labels[:, first_labels.shape[-1]-1:].to(logits.device),
+                    logits,
+                    shift_logits=False,
+                    ignore_index=ignore_index,
+                )
+
+            loss.backward()
+
+        self.zero_grad(True)
+        self.reset_state()
+            
+        return torch.cat(all_logits, dim=1).detach()

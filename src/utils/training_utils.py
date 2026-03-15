@@ -34,6 +34,12 @@ def lm_loss(
     if reduction == 'none':
         out = out.reshape_as(input_ids)
 
+        out = torch.where(
+            input_ids == ignore_index,
+            torch.full_like(out, float('nan')),
+            out
+        )
+
     return out
 
 
