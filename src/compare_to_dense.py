@@ -150,6 +150,13 @@ def main():
         )
 
 
+def nan_mean(x):
+    mask = np.isfinite(x)
+    s = mask.sum(0)
+    x = np.where(mask, x, np.zeros_like(x))
+    return x.sum(0) / s
+
+
 def analyze_results():
 
     lm_losses = torch.load(os.path.join(constants.LOCAL_DATA_PATH, "lm_losses.pt")).float().numpy()
@@ -161,15 +168,15 @@ def analyze_results():
     sliding_losses = sliding_losses.float().numpy()
 
     df = pd.DataFrame({
-        "lm_loss": lm_losses.mean(0),
-        "ittt_loss": ittt_losses.mean(0),
-        "sliding_loss": sliding_losses.mean(0),
+        "lm_loss": nan_mean(lm_losses),
+        "ittt_loss": nan_mean(ittt_losses),
+        "sliding_loss": nan_mean(sliding_losses),
     })
 
     for col in df.columns:
 
         x = np.arange(len(df[col]))
-        y_running = df[col].rolling(window=250)
+        y_running = df[col].rolling(window=500)
         
         plt.plot(x, y_running.mean(), label=col)
     
@@ -179,5 +186,5 @@ def analyze_results():
 
 
 if __name__ == "__main__":
-    main()
+    # main()
     analyze_results()
