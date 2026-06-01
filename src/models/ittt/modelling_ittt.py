@@ -24,7 +24,7 @@ def newtonschulz(
     a, b, c = (3.4445, -4.7750, 2.0315)
 
     y = x / (
-        x.reshape(*x.shape[:-2], -1).norm(dim=-1)[:, None, None] + eps
+        x.reshape(*x.shape[:-2], -1).norm(dim=-1)[..., None, None] + eps
     )
 
     if x.shape[-2] > x.shape[-1]:
