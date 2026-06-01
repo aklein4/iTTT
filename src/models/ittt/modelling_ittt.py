@@ -270,8 +270,8 @@ class ItttModel(PreTrainedModel):
         for layer in self.llama.model.layers:
             layer: LlamaDecoderLayer
 
-            layer.mlp = FastWeightMLP(config)
-            mlp = layer.mlp
+            mlp = FastWeightMLP(config)
+            mlp.load_state_dict(layer.mlp.state_dict(), strict=False)
 
             mlp.gate_fast.weight.data.copy_(
                 mlp.gate_proj.weight.data[:mlp.fast_weight_size, :]
@@ -282,6 +282,8 @@ class ItttModel(PreTrainedModel):
             mlp.down_fast.weight.data.copy_(
                 mlp.down_proj.weight.data[:, :mlp.fast_weight_size]
             )
+
+            layer.mlp = mlp
 
         self.post_init()
 
