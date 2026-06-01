@@ -288,7 +288,7 @@ class ItttModel(PreTrainedModel):
         self.post_init()
 
     
-    def _init_weights(self, module):
+    def initialize_weights(self):
         # We don't want to re-initialize the weights, so we override this method to do nothing.
         return
 
