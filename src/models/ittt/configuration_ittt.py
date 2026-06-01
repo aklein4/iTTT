@@ -16,6 +16,12 @@ class ItttConfig(PretrainedConfig):
             The base learning rate for iTTT updates.
         momentum_beta (`float`, *optional*, defaults to 0.90):
             The beta parameter for momentum in iTTT updates.
+        momentum_dtype (`str`, *optional*, defaults to `"bfloat16"`):
+            The data type for momentum buffers in iTTT updates.
+        state_dtype (`str`, *optional*, defaults to `"float32"`):
+            The data type for the fast weight states in iTTT updates.
+        disable_fast_weights (`bool`, *optional*, defaults to `False`):
+            Whether to disable the use of fast weights in the model.
     ```"""
 
     model_type = "ittt"
@@ -27,6 +33,9 @@ class ItttConfig(PretrainedConfig):
         fast_weight_size: int=256,
         base_lr: float=1e-3,
         momentum_beta: float=0.90,
+        momentum_dtype: str="bfloat16",
+        state_dtype: str="float32",
+        disable_fast_weights: bool=False,
         **kwargs,
     ):
         
@@ -36,5 +45,10 @@ class ItttConfig(PretrainedConfig):
 
         self.base_lr = base_lr
         self.momentum_beta = momentum_beta
+
+        self.momentum_dtype = momentum_dtype
+        self.state_dtype = state_dtype
+
+        disable_fast_weights = disable_fast_weights
 
         super().__init__(**kwargs)

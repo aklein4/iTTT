@@ -262,6 +262,9 @@ class ItttModel(PreTrainedModel):
             torch_dtype=torch.float32,
             attn_implementation=config._attn_implementation
         )
+
+        for k, v in self.llama.config.to_dict().items():
+            setattr(self.config, k, v)
         
         self.disable_fast_weights = config.disable_fast_weights
         if self.disable_fast_weights:
