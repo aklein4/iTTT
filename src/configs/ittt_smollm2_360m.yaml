@@ -26,8 +26,7 @@ model:
 
             base_model: HuggingFaceTB/SmolLM2-360M
 
-            start_layer: 8
-            rank: 256
+            fast_weight_size: 960
 
             base_lr: 1e-3
             momentum_beta: 0.9

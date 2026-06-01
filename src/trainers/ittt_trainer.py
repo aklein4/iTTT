@@ -13,6 +13,11 @@ class ItttTrainer(BaseTrainer):
     model: ItttModel
 
 
+    def post_init(self):
+        self.model.init_state(self.config.batch_size, constants.DEVICE)
+
+
+
     def loss(self, input_ids, logits):
         ignore_index = -100
         if self.model.llama.config.pad_token_id is not None:
@@ -41,7 +46,7 @@ class ItttTrainer(BaseTrainer):
             "dtype": getattr(torch, self.config.trainer.autocast_dtype),
         }
 
-        self.model.reset_state()
+        self.model.empty_state()
 
         # first chunk
         with torch.autocast(**ac_kwargs):
@@ -98,7 +103,7 @@ class ItttTrainer(BaseTrainer):
         optimizer.zero_grad(set_to_none=True)
 
         # do this again just in case
-        self.model.reset_state()
+        self.model.empty_state()
 
         # finalize outputs
         final_loss = total_loss / len(chunks)
