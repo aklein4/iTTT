@@ -49,6 +49,6 @@ class ItttConfig(PretrainedConfig):
         self.momentum_dtype = momentum_dtype
         self.state_dtype = state_dtype
 
-        disable_fast_weights = disable_fast_weights
+        self.disable_fast_weights = disable_fast_weights
 
         super().__init__(**kwargs)
