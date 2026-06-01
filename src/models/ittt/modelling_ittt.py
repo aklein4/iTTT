@@ -21,13 +21,10 @@ def newtonschulz(
 ) -> torch.FloatTensor:
     # https://kellerjordan.github.io/posts/muon/
     
-    assert x.ndim == 3, "x must be a 2D and batch"
-    bs = x.shape[0]
-
     a, b, c = (3.4445, -4.7750, 2.0315)
 
     y = x / (
-        x.reshape(bs, -1).norm(dim=-1)[:, None, None] + eps
+        x.reshape(*x.shape[:-2], -1).norm(dim=-1)[:, None, None] + eps
     )
 
     if x.shape[-2] > x.shape[-1]:
