@@ -100,6 +100,12 @@ class FastWeight(nn.Module):
         self.log_lr = nn.Parameter(
             torch.zeros(self.out_features, self.in_features)
         )
+        self.p_r = nn.Parameter(
+            torch.eye(self.in_features)
+        )
+        self.p_l = nn.Parameter(
+            torch.eye(self.out_features)
+        )
 
         # ephemeral state
         self.state: nn.Buffer
@@ -115,6 +121,18 @@ class FastWeight(nn.Module):
         )
 
 
+    @torch.compile(fullgraph=True, mode="reduce-overhead")
+    def get_s(self):
+
+        s = self.state.detach()
+
+        s = self.p_l[None] @ s @ self.p_r[None]
+        s = self.get_lr()[None] * s
+        s = self.p_l.T[None] @ s @ self.p_r.T[None]
+
+        return s
+
+
     def forward(
         self,
         x: torch.FloatTensor,
@@ -122,7 +140,7 @@ class FastWeight(nn.Module):
 
         assert x.ndim == 3, "x must be 3D (batch, seq_len, dim)"
 
-        s = self.get_lr()[None] * self.state.detach()
+        s = self.get_s()
 
         y = torch.einsum("boi,bli->blo", s, x)
         y = FastWeightFunction.apply(x, y, self.momentum)
