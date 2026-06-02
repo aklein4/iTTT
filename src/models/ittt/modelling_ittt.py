@@ -41,6 +41,16 @@ def newtonschulz(
     return y
 
 
+# @torch.compile(fullgraph=True, mode="reduce-overhead")
+def precondition(state, lr, p_l, p_r):
+
+    s = p_l[None] @ state @ p_r[None]
+    s = lr[None] * s
+    s = p_l.T[None] @ s @ p_r.T[None]
+
+    return s
+
+
 class FastWeightFunction(torch.autograd.Function):
 
     @staticmethod
@@ -121,16 +131,10 @@ class FastWeight(nn.Module):
         )
 
 
-    @torch.compile(fullgraph=True, mode="reduce-overhead")
     def get_s(self):
-
-        s = self.state.detach()
-
-        s = self.p_l[None] @ s @ self.p_r[None]
-        s = self.get_lr()[None] * s
-        s = self.p_l.T[None] @ s @ self.p_r.T[None]
-
-        return s
+        return precondition(
+            self.state.detach(), self.get_lr(), self.p_l, self.p_r
+        )
 
 
     def forward(
